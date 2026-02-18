@@ -6,7 +6,7 @@
     "instanceTypeFallback": "Accelerated.g6e.xlarge",
     "fleetType": "ON_DEMAND",
     "minCapacity": 0,
-    "maxCapacity": 5,
+    "maxCapacity": 1,
     "streamingProtocol": "NICE_DCV"
   },
   "image": {

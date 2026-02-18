@@ -23,7 +23,7 @@ Infrastructure deployed via AWS CDK (TypeScript):
 
 AppStream GPU instance quotas default to 0. You'll need to request quota increases for:
 - **Image builder quota** (L-472DE3D3): minimum 1
-- **Fleet instance quota** (L-2C3EA73C): minimum 5
+- **Fleet instance quota** (L-2C3EA73C): minimum 1
 
 See AWS documentation for requesting quota increases: https://docs.aws.amazon.com/appstream2/latest/developerguide/service-quotas.html
 
@@ -42,7 +42,7 @@ cdk deploy
 This deploys:
 - VPC with private subnets
 - API Gateway + Lambda functions for metrics API
-- S3 bucket + CloudFront distribution for dashboard
+- S3 bucket + CloudFront distribution for dashboard (optional, see Configuration)
 - IAM role for AppStream image import
 
 The fleet is NOT created yet (no image configured in `config.json`).
@@ -78,28 +78,7 @@ Now that `config.json` has the image name set, this deploys:
 - AppStream fleet (STOPPED state by default)
 - AppStream stack
 
-After deployment, **start the fleet**:
-
-```bash
-# Set desired capacity and start
-aws appstream update-fleet \
-  --name appstream-omniverse-fleet \
-  --compute-capacity DesiredInstances=1 \
-  --region eu-central-1
-
-aws appstream start-fleet \
-  --name appstream-omniverse-fleet \
-  --region eu-central-1
-```
-
-Wait for fleet to reach RUNNING state (10-15 minutes):
-
-```bash
-aws appstream describe-fleets \
-  --names appstream-omniverse-fleet \
-  --region eu-central-1 \
-  --query "Fleets[0].State" --output text
-```
+After deployment, start the fleet and set desired capacity to 1. You can do this via the [AppStream console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or the [AWS CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/start-fleet.html). The fleet takes 10-15 minutes to reach RUNNING state.
 
 ## Test It
 
@@ -117,11 +96,9 @@ In the streaming session:
 - Open a command prompt and run `nvidia-smi` — should show an NVIDIA L40S GPU (Ada Lovelace architecture)
 - Launch the Omniverse Kit application and verify 3D rendering works smoothly
 
-### View Metrics Dashboard
+### View Metrics Dashboard (Optional)
 
-Access the dashboard via the `DashboardUrl` from CDK outputs (CloudFront URL).
-
-**Authentication**: The dashboard automatically uses the API key from `runtime-config.json` (injected during deployment). No manual configuration needed.
+If the dashboard is enabled (`monitoring.dashboardEnabled: true` in `config.json`), access it via the `DashboardUrl` from CDK outputs. Authentication is automatic — no manual configuration needed.
 
 ## Clean Up
 
@@ -151,7 +128,8 @@ All settings controlled via `config.json`:
 - `fleet.instanceType` — GPU instance type (default: Accelerated.g6e.xlarge)
 - `fleet.minCapacity` / `fleet.maxCapacity` — Fleet scaling limits
 - `image.customImageName` — AppStream image name (set automatically by `prepare-ami.py` script)
-- `image.marketplaceAmiId` — Source marketplace AMI for image preparation (default: `ami-07bafd3ee37eb865e`)
+- `image.marketplaceAmiId` — Source marketplace AMI for image preparation
+- `monitoring.dashboardEnabled` — Deploy the web dashboard (S3 + CloudFront). Set to `false` to skip dashboard deployment; the metrics API remains available via CLI regardless
 
 Review and modify as needed before deployment.
 

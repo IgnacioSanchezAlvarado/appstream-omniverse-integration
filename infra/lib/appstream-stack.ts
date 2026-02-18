@@ -16,6 +16,7 @@ import * as config from '../../config.json';
 // Phase 2: Set customImageName = "your-image" → adds fleet, stack, association
 
 const fleetEnabled = config.image.customImageName !== '';
+const dashboardEnabled = config.monitoring.dashboardEnabled;
 
 export class AppStreamOmniverseStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -211,63 +212,69 @@ export class AppStreamOmniverseStack extends cdk.Stack {
     });
 
     // ──────────────────────────────────────────────
-    // S3: Dashboard hosting bucket
+    // S3: Dashboard hosting bucket (conditional)
     // ──────────────────────────────────────────────
-    const dashboardBucket = new s3.Bucket(this, 'DashboardBucket', {
-      bucketName: `${config.projectName}-dashboard-${this.account}`,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-    });
+    if (dashboardEnabled) {
+      const dashboardBucket = new s3.Bucket(this, 'DashboardBucket', {
+        bucketName: `${config.projectName}-dashboard-${this.account}`,
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        autoDeleteObjects: true,
+        encryption: s3.BucketEncryption.S3_MANAGED,
+      });
 
-    // ──────────────────────────────────────────────
-    // CloudFront: Distribution with OAC
-    // ──────────────────────────────────────────────
-    const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(dashboardBucket),
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-      },
-      defaultRootObject: 'index.html',
-      errorResponses: [
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
+      // ──────────────────────────────────────────────
+      // CloudFront: Distribution with OAC
+      // ──────────────────────────────────────────────
+      const distribution = new cloudfront.Distribution(this, 'Distribution', {
+        defaultBehavior: {
+          origin: origins.S3BucketOrigin.withOriginAccessControl(dashboardBucket),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         },
-        {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-        },
-      ],
-    });
+        defaultRootObject: 'index.html',
+        errorResponses: [
+          {
+            httpStatus: 403,
+            responseHttpStatus: 200,
+            responsePagePath: '/index.html',
+          },
+          {
+            httpStatus: 404,
+            responseHttpStatus: 200,
+            responsePagePath: '/index.html',
+          },
+        ],
+      });
 
-    // ──────────────────────────────────────────────
-    // S3 Deployment: Upload dashboard build + runtime config
-    // ──────────────────────────────────────────────
-    new s3deploy.BucketDeployment(this, 'DashboardDeployment', {
-      sources: [
-        s3deploy.Source.asset(path.join(__dirname, '../../web/metrics-dashboard/dist')),
-        s3deploy.Source.jsonData('runtime-config.json', {
-          apiUrl: api.url.replace(/\/+$/, ''),
-          apiKey: apiKeyValue,
-        }),
-      ],
-      destinationBucket: dashboardBucket,
-      distribution,
-      distributionPaths: ['/*'],
-    });
+      // ──────────────────────────────────────────────
+      // S3 Deployment: Upload dashboard build + runtime config
+      // ──────────────────────────────────────────────
+      new s3deploy.BucketDeployment(this, 'DashboardDeployment', {
+        sources: [
+          s3deploy.Source.asset(path.join(__dirname, '../../web/metrics-dashboard/dist')),
+          s3deploy.Source.jsonData('runtime-config.json', {
+            apiUrl: api.url.replace(/\/+$/, ''),
+            apiKey: apiKeyValue,
+          }),
+        ],
+        destinationBucket: dashboardBucket,
+        distribution,
+        distributionPaths: ['/*'],
+      });
+
+      // ──────────────────────────────────────────────
+      // Dashboard URL Output
+      // ──────────────────────────────────────────────
+      new cdk.CfnOutput(this, 'DashboardUrl', {
+        value: `https://${distribution.distributionDomainName}`,
+        description: 'Metrics dashboard URL',
+      });
+    }
 
     // ──────────────────────────────────────────────
     // Outputs
     // ──────────────────────────────────────────────
-    new cdk.CfnOutput(this, 'DashboardUrl', {
-      value: `https://${distribution.distributionDomainName}`,
-      description: 'Metrics dashboard URL',
-    });
 
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: api.url,
