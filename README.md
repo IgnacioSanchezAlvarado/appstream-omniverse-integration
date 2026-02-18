@@ -18,41 +18,16 @@ Infrastructure deployed via AWS CDK (TypeScript):
 - Node.js 18+ and npm
 - Python 3.12+ and boto3
 - CDK CLI: `npm install -g aws-cdk`
-- **Service quotas approved** for g6e instance types in AppStream:
-  - Image builder quota (L-472DE3D3): minimum 1
-  - Fleet instance quota (L-2C3EA73C): minimum 5
-- **NVIDIA Omniverse Developer Kit marketplace subscription**: [Subscribe here](https://aws.amazon.com/marketplace/pp/prodview-ndixrws36jsni)
-  - AMI ID: `ami-07bafd3ee37eb865e` (eu-central-1)
 
 ### Request Service Quotas (Do This First)
 
-AppStream GPU instance quotas default to 0. Request increases before deploying:
+AppStream GPU instance quotas default to 0. You'll need to request quota increases for:
+- **Image builder quota** (L-472DE3D3): minimum 1
+- **Fleet instance quota** (L-2C3EA73C): minimum 5
 
-```bash
-# Image builder quota (needed for image import with runtime validation)
-aws service-quotas request-service-quota-increase \
-  --service-code appstream2 \
-  --quota-code L-472DE3D3 \
-  --desired-value 1 \
-  --region eu-central-1
+See AWS documentation for requesting quota increases: https://docs.aws.amazon.com/appstream2/latest/developerguide/service-quotas.html
 
-# Fleet instance quota
-aws service-quotas request-service-quota-increase \
-  --service-code appstream2 \
-  --quota-code L-2C3EA73C \
-  --desired-value 5 \
-  --region eu-central-1
-```
-
-Check approval status:
-
-```bash
-aws service-quotas list-requested-service-quota-change-history \
-  --service-code appstream2 --region eu-central-1 \
-  --query "RequestedQuotas[*].[QuotaName,Status,DesiredValue]" --output table
-```
-
-**Wait for both quotas to be approved before proceeding.** Approval typically takes 1-2 business days.
+Approval typically takes 1-2 business days. Wait for both quotas to be approved before proceeding.
 
 ## Deploy
 
@@ -69,11 +44,6 @@ This deploys:
 - API Gateway + Lambda functions for metrics API
 - S3 bucket + CloudFront distribution for dashboard
 - IAM role for AppStream image import
-
-**Note these CDK outputs** — you'll need them later:
-- `ImageImportRoleArn` — required for Step 2 (image import)
-- `DashboardUrl` — dashboard URL (after Step 3)
-- `ApiKeyValue` — API key for dashboard authentication (stored in runtime-config.json)
 
 The fleet is NOT created yet (no image configured in `config.json`).
 
@@ -98,26 +68,6 @@ This script:
 - `--skip-appstream-import` — Only create the AMI, skip AppStream import (you'll need to manually import)
 - `--testing` — Keep EC2 instance running for manual inspection instead of terminating
 
-**Manual Alternative:**
-
-If the script fails (e.g., InsufficientInstanceCapacity errors):
-
-1. Launch a g6e.xlarge instance from the Omniverse marketplace AMI in AWS Console
-2. Connect via RDP/SSM and verify Omniverse and `nvidia-smi` work
-3. Stop the instance, create an AMI (Actions > Image and templates > Create image)
-4. Import into AppStream:
-   ```bash
-   aws appstream create-imported-image \
-     --name omniverse \
-     --source-ami-id <your-ami-id> \
-     --iam-role-arn <ImageImportRoleArn-from-step-1> \
-     --description "Omniverse Developer Kit with GRID drivers for G6e" \
-     --agent-software-version ALWAYS_LATEST \
-     --runtime-validation-config IntendedInstanceType=Accelerated.g6e.xlarge \
-     --region eu-central-1
-   ```
-5. Wait for import to complete, then manually update `config.json` with the image name
-
 ### Step 3: Deploy Fleet
 
 ```bash
@@ -127,30 +77,6 @@ cd infra && cdk deploy
 Now that `config.json` has the image name set, this deploys:
 - AppStream fleet (STOPPED state by default)
 - AppStream stack
-
-**If deployment fails with "Internal Failure"**, the AppStream service role may be missing:
-
-```bash
-# Create service role (only needed once per account)
-aws iam create-role \
-  --role-name AmazonAppStreamServiceAccess \
-  --path /service-role/ \
-  --assume-role-policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Principal": {"Service": "appstream.amazonaws.com"},
-      "Action": "sts:AssumeRole"
-    }]
-  }'
-
-aws iam attach-role-policy \
-  --role-name AmazonAppStreamServiceAccess \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonAppStreamServiceAccess
-
-# Retry deployment
-cd infra && cdk deploy
-```
 
 After deployment, **start the fleet**:
 
@@ -179,18 +105,11 @@ aws appstream describe-fleets \
 
 ### Create a Streaming Session
 
-Once the fleet is RUNNING:
+Once the fleet is RUNNING, create a streaming URL via the AppStream console or AWS CLI:
+- **Console**: https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html
+- **CLI**: https://docs.aws.amazon.com/cli/latest/reference/appstream/create-streaming-url.html
 
-```bash
-aws appstream create-streaming-url \
-  --stack-name appstream-omniverse-stack \
-  --fleet-name appstream-omniverse-fleet \
-  --user-id test@example.com \
-  --validity 60 \
-  --region eu-central-1
-```
-
-Open the returned `StreamingURL` in a browser to start a streaming session.
+Open the streaming URL in a browser to start a session.
 
 ### Verify GPU Acceleration
 
@@ -203,33 +122,6 @@ In the streaming session:
 Access the dashboard via the `DashboardUrl` from CDK outputs (CloudFront URL).
 
 **Authentication**: The dashboard automatically uses the API key from `runtime-config.json` (injected during deployment). No manual configuration needed.
-
-The dashboard displays:
-- **FPS** — Frames per second delivered to the streaming client
-- **Latency** — Round-trip time between server and client (milliseconds)
-- **Bandwidth** — Network throughput (kilobits/second)
-- **CPU Utilization** — Instance CPU usage (percent)
-
-All metrics are automatically collected by AppStream and published to CloudWatch (no custom instrumentation required). The dashboard auto-refreshes every 30 seconds.
-
-### CLI Metrics Check
-
-Verify metrics appear in CloudWatch:
-
-```bash
-for metric in InSessionLatency FramesPerSecond Bandwidth CpuUtilizationInstance; do
-  echo "=== $metric ==="
-  aws cloudwatch get-metric-statistics \
-    --namespace AWS/AppStream \
-    --metric-name $metric \
-    --dimensions Name=Fleet,Value=appstream-omniverse-fleet \
-    --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
-    --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
-    --period 60 \
-    --statistics Average,Maximum,Minimum \
-    --region eu-central-1
-done
-```
 
 ## Clean Up
 
@@ -265,16 +157,80 @@ Review and modify as needed before deployment.
 
 ## Troubleshooting
 
-**Fleet deployment fails with "Internal Failure"**
-- Missing AppStream service role. See Step 3 deployment instructions to create it.
+### Manual Image Build Alternative
+
+If `prepare-ami.py` fails (e.g., InsufficientInstanceCapacity errors):
+
+1. Launch a g6e.xlarge instance from the Omniverse marketplace AMI in AWS Console
+2. Connect via RDP/SSM and verify Omniverse and `nvidia-smi` work
+3. Stop the instance, create an AMI (Actions > Image and templates > Create image)
+4. Import into AppStream:
+   ```bash
+   aws appstream create-imported-image \
+     --name omniverse \
+     --source-ami-id <your-ami-id> \
+     --iam-role-arn <ImageImportRoleArn-from-step-1> \
+     --description "Omniverse Developer Kit with GRID drivers for G6e" \
+     --agent-software-version ALWAYS_LATEST \
+     --runtime-validation-config IntendedInstanceType=Accelerated.g6e.xlarge \
+     --region eu-central-1
+   ```
+5. Wait for import to complete, then manually update `config.json` with the image name
+
+### Service Role Missing
+
+If fleet deployment fails with "Internal Failure", the AppStream service role may be missing:
+
+```bash
+# Create service role (only needed once per account)
+aws iam create-role \
+  --role-name AmazonAppStreamServiceAccess \
+  --path /service-role/ \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Service": "appstream.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+
+aws iam attach-role-policy \
+  --role-name AmazonAppStreamServiceAccess \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonAppStreamServiceAccess
+
+# Retry deployment
+cd infra && cdk deploy
+```
+
+### CLI Metrics Check
+
+Verify metrics appear in CloudWatch:
+
+```bash
+for metric in InSessionLatency FramesPerSecond Bandwidth CpuUtilizationInstance; do
+  echo "=== $metric ==="
+  aws cloudwatch get-metric-statistics \
+    --namespace AWS/AppStream \
+    --metric-name $metric \
+    --dimensions Name=Fleet,Value=appstream-omniverse-fleet \
+    --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
+    --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+    --period 60 \
+    --statistics Average,Maximum,Minimum \
+    --region eu-central-1
+done
+```
+
+### Other Common Issues
 
 **`prepare-ami.py` fails with InsufficientInstanceCapacity**
-- G6e capacity exhausted in selected AZ. Try different AZ or use manual alternative in Step 2.
+- G6e capacity exhausted in selected AZ. Try different AZ or use manual alternative above.
 
 **Metrics not appearing in dashboard**
 - Ensure you've created an active streaming session
 - Wait 2-3 minutes for CloudWatch metrics to propagate
-- Verify metrics in CLI using the test commands in "CLI Metrics Check" section
+- Verify metrics in CLI using the test commands above
 
 **Dashboard shows "Failed to fetch sessions"**
 - Check API Gateway logs in CloudWatch (`/aws/lambda/metrics-collector-lambda`)
