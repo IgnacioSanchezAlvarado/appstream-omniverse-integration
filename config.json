@@ -1,0 +1,43 @@
+{
+  "projectName": "appstream-omniverse",
+  "region": "eu-central-1",
+  "fleet": {
+    "instanceType": "Accelerated.g6e.2xlarge",
+    "instanceTypeFallback": "Accelerated.g6e.xlarge",
+    "fleetType": "ON_DEMAND",
+    "minCapacity": 0,
+    "maxCapacity": 5,
+    "streamingProtocol": "NICE_DCV"
+  },
+  "image": {
+    "baseAmiParameter": "/aws/service/ami-windows-latest/TPM-Windows_Server-2022-English-Full-Base",
+    "marketplaceAmiId": "ami-07bafd3ee37eb865e",
+    "customImageName": "omniverse-g6e-1771344526"
+  },
+  "amiBuilder": {
+    "_comment": "G6e instance types tried in order for AMI creation. First available is used. 2xlarge recommended for faster Omniverse builds.",
+    "instanceTypes": [
+      "g6e.xlarge",
+      "g6e.2xlarge",
+      "g6e.4xlarge"
+    ]
+  },
+  "monitoring": {
+    "dashboardEnabled": true,
+    "metricsRetentionDays": 7,
+    "cloudWatchNamespace": "AWS/AppStream",
+    "metricsToDisplay": [
+      "InSessionLatency",
+      "FramesPerSecond",
+      "Bandwidth",
+      "CpuUtilizationInstance"
+    ]
+  },
+  "omniverse": {
+    "kitAppTemplateRepo": "https://github.com/NVIDIA-Omniverse/kit-app-template"
+  },
+  "tags": {
+    "Project": "appstream-omniverse",
+    "Environment": "poc"
+  }
+}

@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+cdk.out/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# CDK TypeScript compiled output
+infra/*.js
+infra/*.d.ts
+infra/*.js.map
+!infra/jest.config.js
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+*-credentials.json
+service-account*.json
+aws-exports.js
+
+# Runtime config (generated at deploy time with API keys)
+web/metrics-dashboard/public/runtime-config.json
+
+# Claude Code (local development tool files)
+CLAUDE.md
+.claude/
+.claudeignore
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+htmlcov/
+.coverage
+*.lcov
