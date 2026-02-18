@@ -2,6 +2,11 @@
 
 AWS AppStream 2.0 streaming NVIDIA Omniverse Kit applications with GPU acceleration (G6e instances, NVIDIA L40S GPUs). Includes a metrics dashboard showing real-time FPS, latency, bandwidth, and CPU utilization from AppStream's built-in CloudWatch metrics.
 
+<table><tr>
+<td><img src="appstream.png" alt="Omniverse Kit running in AppStream" width="400"/></td>
+<td><img src="dashboard.png" alt="Metrics dashboard" width="400"/></td>
+</tr></table>
+
 ## Architecture
 
 **VPC with private subnets** → **AppStream fleet (G6e GPU instances)** → **CloudFront dashboard**
@@ -94,7 +99,7 @@ Open the streaming URL in a browser to start a session.
 
 In the streaming session:
 - Open a command prompt and run `nvidia-smi` — should show an NVIDIA L40S GPU (Ada Lovelace architecture)
-- Launch the Omniverse Kit application and verify 3D rendering works smoothly
+- Clone the [Kit App Template](https://github.com/NVIDIA-Omniverse/kit-app-template) into `C:\Users\PhotonUser` (the AppStream session user folder) and follow the [create and configure new application](https://github.com/NVIDIA-Omniverse/kit-app-template?tab=readme-ov-file#2-create-and-configure-new-application-from-template) instructions to verify 3D rendering works smoothly
 
 ### View Metrics Dashboard (Optional)
 
