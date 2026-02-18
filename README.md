@@ -3,8 +3,8 @@
 AWS AppStream 2.0 streaming NVIDIA Omniverse Kit applications with GPU acceleration (G6e instances, NVIDIA L40S GPUs). Includes a metrics dashboard showing real-time FPS, latency, bandwidth, and CPU utilization from AppStream's built-in CloudWatch metrics.
 
 <table><tr>
-<td><img src="appstream.png" alt="Omniverse Kit running in AppStream" width="400"/></td>
-<td><img src="dashboard.png" alt="Metrics dashboard" width="400"/></td>
+<td><img src="images/appstream.png" alt="Omniverse Kit running in AppStream" width="400"/></td>
+<td><img src="images/dashboard.png" alt="Metrics dashboard" width="400"/></td>
 </tr></table>
 
 ## Architecture
