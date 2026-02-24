@@ -65,6 +65,10 @@ nucleus_latency.png
 omniverse.png
 *.local
 
+# Nucleus build artifacts (downloaded from GitHub at deploy time, not stored locally)
+scripts/nucleus/tools/*.tar.gz
+scripts/nucleus/tools/templates/
+
 # Logs
 *.log
 npm-debug.log*
