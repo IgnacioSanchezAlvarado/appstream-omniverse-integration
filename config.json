@@ -2,8 +2,8 @@
   "projectName": "appstream-omniverse",
   "region": "eu-central-1",
   "fleet": {
-    "instanceType": "Accelerated.g6e.2xlarge",
-    "instanceTypeFallback": "Accelerated.g6e.xlarge",
+    "instanceType": "Accelerated.g6e.xlarge",
+    "instanceTypeFallback": "Accelerated.g6e.2xlarge",
     "fleetType": "ON_DEMAND",
     "minCapacity": 0,
     "maxCapacity": 1,
@@ -12,14 +12,15 @@
   "image": {
     "baseAmiParameter": "/aws/service/ami-windows-latest/TPM-Windows_Server-2022-English-Full-Base",
     "marketplaceAmiId": "ami-07bafd3ee37eb865e",
-    "customImageName": "omniverse-g6e-1771344526"
+    "customImageName": "omniverse-g6e-1771940417"
   },
   "amiBuilder": {
-    "_comment": "G6e instance types tried in order for AMI creation. First available is used. 2xlarge recommended for faster Omniverse builds.",
+    "_comment": "G6e instance types tried in order for AMI creation. Must match fleet GPU family (L40S) for GRID driver compatibility.",
     "instanceTypes": [
       "g6e.xlarge",
       "g6e.2xlarge",
-      "g6e.4xlarge"
+      "g6e.4xlarge",
+      "g6e.8xlarge"
     ]
   },
   "monitoring": {
@@ -35,6 +36,13 @@
   },
   "omniverse": {
     "kitAppTemplateRepo": "https://github.com/NVIDIA-Omniverse/kit-app-template"
+  },
+  "nucleus": {
+    "enabled": true,
+    "metricsEnabled": true,
+    "instanceType": "c5.2xlarge",
+    "storageSize": 512,
+    "nucleusBuild": "nucleus-stack-2023.1.0+tag-2023.1.0.gitlab.8633670.7f07353a"
   },
   "tags": {
     "Project": "appstream-omniverse",

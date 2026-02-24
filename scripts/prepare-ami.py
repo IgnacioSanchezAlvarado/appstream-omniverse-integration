@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import base64
+import gzip
 import json
 import os
 import signal
@@ -60,7 +61,7 @@ def load_config():
 
 
 def discover_infrastructure(ec2, project_name):
-    """Find VPC, private subnets, and security group created by CDK."""
+    """Find VPC, private/public subnets, and security group created by CDK."""
     log(f'Auto-discovering infrastructure (Project tag: {project_name})...')
 
     # Find VPC by project tag
@@ -75,24 +76,40 @@ def discover_infrastructure(ec2, project_name):
         ]).get('Vpcs', [])
 
     if not vpcs:
-        return None, [], None
+        return None, [], [], None
 
     vpc_id = vpcs[0]['VpcId']
     log(f'Found VPC: {vpc_id}')
 
-    subnets = ec2.describe_subnets(Filters=[
+    # Find private subnets
+    private_subnets = ec2.describe_subnets(Filters=[
         {'Name': 'vpc-id', 'Values': [vpc_id]},
         {'Name': 'tag:aws-cdk:subnet-type', 'Values': ['Private']},
     ]).get('Subnets', [])
 
-    if not subnets:
-        subnets = ec2.describe_subnets(Filters=[
+    if not private_subnets:
+        private_subnets = ec2.describe_subnets(Filters=[
             {'Name': 'vpc-id', 'Values': [vpc_id]},
             {'Name': 'tag:Name', 'Values': ['*Private*']},
         ]).get('Subnets', [])
 
-    subnet_ids = [s['SubnetId'] for s in subnets]
-    log(f'Found {len(subnet_ids)} private subnets: {", ".join(subnet_ids)}')
+    private_subnet_ids = [s['SubnetId'] for s in private_subnets]
+    log(f'Found {len(private_subnet_ids)} private subnets: {", ".join(private_subnet_ids)}')
+
+    # Find public subnets
+    public_subnets = ec2.describe_subnets(Filters=[
+        {'Name': 'vpc-id', 'Values': [vpc_id]},
+        {'Name': 'tag:aws-cdk:subnet-type', 'Values': ['Public']},
+    ]).get('Subnets', [])
+
+    if not public_subnets:
+        public_subnets = ec2.describe_subnets(Filters=[
+            {'Name': 'vpc-id', 'Values': [vpc_id]},
+            {'Name': 'tag:Name', 'Values': ['*Public*']},
+        ]).get('Subnets', [])
+
+    public_subnet_ids = [s['SubnetId'] for s in public_subnets]
+    log(f'Found {len(public_subnet_ids)} public subnets: {", ".join(public_subnet_ids)}')
 
     # Find security group
     sgs = ec2.describe_security_groups(Filters=[
@@ -110,7 +127,7 @@ def discover_infrastructure(ec2, project_name):
     if sg_id:
         log(f'Found security group: {sg_id}')
 
-    return vpc_id, subnet_ids, sg_id
+    return vpc_id, private_subnet_ids, public_subnet_ids, sg_id
 
 
 def get_base_ami(ssm, region, param_name):
@@ -303,40 +320,112 @@ def update_config_with_image(image_name, project_name):
         return False
 
 
-def launch_instance(ec2, ami_id, subnet_ids, sg_id, project_name, profile_name, instance_types=None):
-    """Try instance types across subnets until one succeeds."""
+def discover_default_vpc_subnets(ec2):
+    """Find default VPC and its subnets as last resort."""
+    try:
+        vpcs = ec2.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}]).get('Vpcs', [])
+        if not vpcs:
+            return []
+
+        vpc_id = vpcs[0]['VpcId']
+        subnets = ec2.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]).get('Subnets', [])
+        subnet_ids = [s['SubnetId'] for s in subnets]
+        log(f'Found default VPC: {vpc_id} with {len(subnet_ids)} subnets')
+        return subnet_ids
+    except Exception as e:
+        log(f'Could not find default VPC: {e}')
+        return []
+
+
+def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project_name, profile_name, instance_types=None):
+    """Try instance types across subnets until one succeeds.
+
+    Tries in order:
+    1. Private subnets from CDK VPC (with SG)
+    2. Public subnets from CDK VPC (with public IP)
+    3. Default VPC subnets (as last resort, with public IP)
+    """
     global _instance_id
-    with open(USERDATA_FILE) as f:
-        userdata_b64 = base64.b64encode(f.read().encode()).decode()
+    with open(USERDATA_FILE, 'rb') as f:
+        userdata_raw = f.read()
+    userdata_b64 = base64.b64encode(gzip.compress(userdata_raw)).decode()
 
     types_to_try = instance_types or DEFAULT_INSTANCE_TYPES
+
+    # Build list of (subnet_id, needs_public_ip, sg_id_to_use, label) tuples
+    subnet_attempts = []
+
+    # Phase 1: Private subnets from CDK VPC (preferred)
+    for subnet_id in private_subnets:
+        subnet_attempts.append((subnet_id, False, sg_id, 'private'))
+
+    # Phase 2: Public subnets from CDK VPC
+    for subnet_id in public_subnets:
+        subnet_attempts.append((subnet_id, True, sg_id, 'public'))
+
+    # Phase 3: Default VPC subnets (discover once, add as last resort)
+    default_subnets = discover_default_vpc_subnets(ec2)
+    if default_subnets:
+        # Get default security group for default VPC
+        try:
+            subnet_info = ec2.describe_subnets(SubnetIds=[default_subnets[0]])['Subnets'][0]
+            default_vpc_id = subnet_info['VpcId']
+            default_sgs = ec2.describe_security_groups(Filters=[
+                {'Name': 'vpc-id', 'Values': [default_vpc_id]},
+                {'Name': 'group-name', 'Values': ['default']},
+            ]).get('SecurityGroups', [])
+            default_sg = default_sgs[0]['GroupId'] if default_sgs else None
+            for subnet_id in default_subnets:
+                subnet_attempts.append((subnet_id, True, default_sg, 'default-vpc'))
+        except Exception as e:
+            log(f'Could not set up default VPC fallback: {e}')
+
+    log(f'Will try {len(subnet_attempts)} subnets across {len(types_to_try)} instance types')
+
     for instance_type in types_to_try:
-        for subnet_id in subnet_ids:
+        for subnet_id, needs_public_ip, security_group, subnet_type in subnet_attempts:
             try:
-                log(f'Trying {instance_type} in subnet {subnet_id}...')
-                resp = ec2.run_instances(
-                    ImageId=ami_id,
-                    InstanceType=instance_type,
-                    MinCount=1, MaxCount=1,
-                    SubnetId=subnet_id,
-                    SecurityGroupIds=[sg_id],
-                    IamInstanceProfile={'Name': profile_name},
-                    UserData=userdata_b64,
-                    BlockDeviceMappings=[{
+                log(f'Trying {instance_type} in {subnet_type} subnet {subnet_id}...')
+
+                base_params = {
+                    'ImageId': ami_id,
+                    'InstanceType': instance_type,
+                    'MinCount': 1,
+                    'MaxCount': 1,
+                    'IamInstanceProfile': {'Name': profile_name},
+                    'UserData': userdata_b64,
+                    'BlockDeviceMappings': [{
                         'DeviceName': '/dev/sda1',
                         'Ebs': {'VolumeSize': 200, 'VolumeType': 'gp3', 'Encrypted': False},
                     }],
-                    TagSpecifications=[{
+                    'TagSpecifications': [{
                         'ResourceType': 'instance',
                         'Tags': [
                             {'Key': 'Name', 'Value': f'{project_name}-ami-prep'},
                             {'Key': 'Project', 'Value': project_name},
                         ],
                     }],
-                )
+                }
+
+                # For public subnets, use NetworkInterfaces to set public IP
+                if needs_public_ip:
+                    base_params['NetworkInterfaces'] = [{
+                        'DeviceIndex': 0,
+                        'SubnetId': subnet_id,
+                        'AssociatePublicIpAddress': True,
+                        'Groups': [security_group] if security_group else [],
+                        'DeleteOnTermination': True,
+                    }]
+                else:
+                    # Private subnet: use SubnetId + SecurityGroupIds
+                    base_params['SubnetId'] = subnet_id
+                    if security_group:
+                        base_params['SecurityGroupIds'] = [security_group]
+
+                resp = ec2.run_instances(**base_params)
                 instance_id = resp['Instances'][0]['InstanceId']
                 _instance_id = instance_id
-                log(f'Launched {instance_id} ({instance_type})')
+                log(f'Launched {instance_id} ({instance_type}) in {subnet_type} subnet')
                 return instance_id, instance_type
             except ClientError as e:
                 code = e.response['Error']['Code']
@@ -347,7 +436,7 @@ def launch_instance(ec2, ami_id, subnet_ids, sg_id, project_name, profile_name, 
                     continue
                 raise
 
-    print(f'\nERROR: Could not launch any instance type.')
+    print(f'\nERROR: Could not launch any instance type across all available subnets.')
     sys.exit(1)
 
 
@@ -424,15 +513,18 @@ def main():
 
             # Step 2: Discover infrastructure
             log('--- Step 2/8: Discovering infrastructure ---')
-            subnet_ids = [args.subnet_id] if args.subnet_id else []
+            private_subnets = [args.subnet_id] if args.subnet_id else []
+            public_subnets = []
             sg_id = args.security_group_id
-            if not subnet_ids or not sg_id:
-                _, disc_sub, disc_sg = discover_infrastructure(ec2, args.project_name)
-                subnet_ids = subnet_ids or disc_sub
+            if not private_subnets or not sg_id:
+                _, disc_private, disc_public, disc_sg = discover_infrastructure(ec2, args.project_name)
+                private_subnets = private_subnets or disc_private
+                public_subnets = disc_public
                 sg_id = sg_id or disc_sg
-            if not subnet_ids or not sg_id:
-                print('ERROR: No subnets/SG found. Deploy CDK first.')
-                sys.exit(1)
+
+            if not private_subnets and not public_subnets:
+                log('WARNING: No CDK subnets found. Will try default VPC as fallback.')
+                # Don't exit - we can still try default VPC
 
             # Step 3: Create IAM instance profile
             log('--- Step 3/8: Creating IAM instance profile ---')
@@ -441,7 +533,7 @@ def main():
             # Step 4: Launch GPU instance (tries types from config in order)
             ami_builder_types = config.get('amiBuilder', {}).get('instanceTypes', None)
             log(f'--- Step 4/8: Launching GPU instance (preference: {ami_builder_types or DEFAULT_INSTANCE_TYPES}) ---')
-            inst_id, inst_type = launch_instance(ec2, base_ami, subnet_ids, sg_id, args.project_name, profile_name, ami_builder_types)
+            inst_id, inst_type = launch_instance(ec2, base_ami, private_subnets, public_subnets, sg_id, args.project_name, profile_name, ami_builder_types)
 
             # Step 5: Wait for setup and ensure userdata executes
             log('--- Step 5/8: Waiting for instance + GRID driver install ---')

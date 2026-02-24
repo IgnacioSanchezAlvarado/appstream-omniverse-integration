@@ -7,6 +7,7 @@ interface SummaryCardProps {
   unit: string;
   color: string;
   glowClass?: string;
+  primaryStat?: 'current' | 'maximum';
 }
 
 export default function SummaryCard({
@@ -14,7 +15,8 @@ export default function SummaryCard({
   summary,
   unit,
   color,
-  glowClass
+  glowClass,
+  primaryStat = 'current'
 }: SummaryCardProps) {
   const formatValue = (value: number): string => {
     // Round to 2 decimal places
@@ -33,9 +35,12 @@ export default function SummaryCard({
       <div className="card-body">
         <div className="primary-value">
           <span className={`value-large mono ${glowClass}`} style={{ color }}>
-            {formatValue(summary.current ?? summary.average)}
+            {formatValue(primaryStat === 'maximum' ? summary.maximum : (summary.current ?? summary.average))}
           </span>
           <span className="value-unit mono">{unit}</span>
+        </div>
+        <div className="primary-stat-label mono">
+          {primaryStat === 'maximum' ? 'peak / 60s' : 'avg / 60s'}
         </div>
 
         <div className="secondary-values">
@@ -62,7 +67,7 @@ export default function SummaryCard({
             className="progress-fill"
             style={{
               backgroundColor: color,
-              width: `${Math.min(((summary.current ?? summary.average) / summary.maximum) * 100, 100)}%`
+              width: `${Math.min(((primaryStat === 'maximum' ? summary.maximum : (summary.current ?? summary.average)) / summary.maximum) * 100, 100)}%`
             }}
           ></div>
         </div>

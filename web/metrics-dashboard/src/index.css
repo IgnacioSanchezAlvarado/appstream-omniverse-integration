@@ -42,6 +42,23 @@
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
+[data-theme="light"] {
+  /* Professional Light Theme */
+  --color-bg-primary: #f8fafc;
+  --color-bg-secondary: #f1f5f9;
+  --color-bg-card: #ffffff;
+  --color-bg-hover: #e8edf5;
+  --color-border: #e2e8f0;
+  --color-border-light: #cbd5e1;
+  --color-text-primary: #1e293b;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --color-accent: #2563eb;
+  --color-accent-light: rgba(37, 99, 235, 0.1);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -56,6 +73,7 @@ body {
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 #root {

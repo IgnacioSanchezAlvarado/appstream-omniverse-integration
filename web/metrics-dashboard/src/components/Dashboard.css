@@ -146,6 +146,32 @@
   background: rgba(52, 211, 153, 0.08);
 }
 
+/* Theme Toggle */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.theme-toggle:hover {
+  border-color: var(--color-border-light);
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.theme-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Session Selector Container */
 .session-selector-container {
   margin-bottom: var(--spacing-lg);
@@ -165,6 +191,11 @@
   grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
   gap: var(--spacing-md);
   margin-bottom: var(--spacing-xl);
+}
+
+/* Nucleus Status Container */
+.nucleus-status-container {
+  margin-bottom: var(--spacing-lg);
 }
 
 /* Footer */

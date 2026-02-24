@@ -1,4 +1,4 @@
-import { MetricsResponse, Session, RuntimeConfig } from '../types';
+import { MetricsResponse, Session, RuntimeConfig, NucleusStatus, NucleusMetricsResponse } from '../types';
 
 let cachedConfig: RuntimeConfig | null = null;
 
@@ -113,5 +113,34 @@ export async function createSession(
     throw new Error(`Failed to create session: ${response.statusText}`);
   }
 
+  return response.json();
+}
+
+export async function fetchNucleusStatus(): Promise<NucleusStatus> {
+  const config = await loadConfig();
+  const response = await fetch(`${config.apiUrl}/nucleus/status`, {
+    headers: await getHeaders()
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Nucleus status: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchNucleusMetrics(
+  options: { startTime?: string; endTime?: string; period?: number } = {}
+): Promise<NucleusMetricsResponse> {
+  const config = await loadConfig();
+  const params = new URLSearchParams({
+    ...(options.startTime && { startTime: options.startTime }),
+    ...(options.endTime && { endTime: options.endTime }),
+    ...(options.period && { period: options.period.toString() })
+  });
+  const response = await fetch(`${config.apiUrl}/nucleus/metrics?${params}`, {
+    headers: await getHeaders()
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Nucleus metrics: ${response.statusText}`);
+  }
   return response.json();
 }

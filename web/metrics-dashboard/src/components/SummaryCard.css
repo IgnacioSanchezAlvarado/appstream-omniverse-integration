@@ -124,6 +124,15 @@
   transition: width 0.6s ease-out;
 }
 
+.primary-stat-label {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: -8px;
+  margin-bottom: 4px;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .value-large {

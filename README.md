@@ -9,7 +9,9 @@ AWS AppStream 2.0 streaming NVIDIA Omniverse Kit applications with GPU accelerat
 
 ## Architecture
 
-**VPC with private subnets** → **AppStream fleet (G6e GPU instances)** → **CloudFront dashboard**
+![Architecture](architecture.png)
+
+**VPC with private subnets** → **AppStream fleet (G6e GPU instances)** → **Nucleus server (optional)** → **CloudFront dashboard**
 
 Infrastructure deployed via AWS CDK (TypeScript):
 - **Backend**: Lambda functions (`metrics-collector`, `session-manager`) serve AppStream metrics via API Gateway with API key authentication
@@ -44,13 +46,7 @@ cdk bootstrap  # first time only
 cdk deploy
 ```
 
-This deploys:
-- VPC with private subnets
-- API Gateway + Lambda functions for metrics API
-- S3 bucket + CloudFront distribution for dashboard (optional, see Configuration)
-- IAM role for AppStream image import
-
-The fleet is NOT created yet (no image configured in `config.json`).
+Deploys VPC, API Gateway + Lambda for metrics, S3 + CloudFront for dashboard, and IAM role for AppStream image import.
 
 ### Step 2: Build AppStream Image
 
@@ -58,20 +54,7 @@ The fleet is NOT created yet (no image configured in `config.json`).
 python scripts/prepare-ami.py
 ```
 
-This script:
-1. Launches a G6e EC2 instance from the Omniverse marketplace AMI
-2. Installs GRID drivers and AppStream prerequisites via userdata
-3. Waits for the instance to be ready
-4. Creates an AMI snapshot
-5. Imports the AMI into AppStream with g6e runtime validation
-6. Waits for AppStream import to complete (~30-60 minutes)
-7. Automatically updates `config.json` with the new image name
-
-**Total time:** ~30-45 minutes
-
-**Options:**
-- `--skip-appstream-import` — Only create the AMI, skip AppStream import (you'll need to manually import)
-- `--testing` — Keep EC2 instance running for manual inspection instead of terminating
+Launches G6e instance from Omniverse marketplace AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes.
 
 ### Step 3: Deploy Fleet
 
@@ -79,31 +62,27 @@ This script:
 cd infra && cdk deploy
 ```
 
-Now that `config.json` has the image name set, this deploys:
-- AppStream fleet (STOPPED state by default)
-- AppStream stack
-
-After deployment, start the fleet and set desired capacity to 1. You can do this via the [AppStream console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or the [AWS CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/start-fleet.html). The fleet takes 10-15 minutes to reach RUNNING state.
+Deploys AppStream fleet (STOPPED) and stack. After deployment, start the fleet and set desired capacity to 1 via [console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or [CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/start-fleet.html). Fleet takes 10-15 minutes to reach RUNNING.
 
 ## Test It
 
 ### Create a Streaming Session
 
-Once the fleet is RUNNING, create a streaming URL via the AppStream console or AWS CLI:
-- **Console**: https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html
-- **CLI**: https://docs.aws.amazon.com/cli/latest/reference/appstream/create-streaming-url.html
-
-Open the streaming URL in a browser to start a session.
+Create a streaming URL via [AppStream console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or [AWS CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/create-streaming-url.html). Open in a browser to start a session.
 
 ### Verify GPU Acceleration
 
 In the streaming session:
-- Open a command prompt and run `nvidia-smi` — should show an NVIDIA L40S GPU (Ada Lovelace architecture)
-- Clone the [Kit App Template](https://github.com/NVIDIA-Omniverse/kit-app-template) into `C:\Users\PhotonUser` (the AppStream session user folder) and follow the [create and configure new application](https://github.com/NVIDIA-Omniverse/kit-app-template?tab=readme-ov-file#2-create-and-configure-new-application-from-template) instructions to verify 3D rendering works smoothly
+- Run `nvidia-smi` in command prompt — should show NVIDIA L40S GPU (Ada Lovelace)
+- [Kit App Template](https://github.com/NVIDIA-Omniverse/kit-app-template) is pre-installed at `C:\Omniverse\kit-app-template` with desktop shortcut
 
-### View Metrics Dashboard (Optional)
+> Session features (Nucleus auto-config, file persistence): see [Session Features](docs/nucleus.md)
 
-If the dashboard is enabled (`monitoring.dashboardEnabled: true` in `config.json`), access it via the `DashboardUrl` from CDK outputs. Authentication is automatic — no manual configuration needed.
+> For Nucleus server setup and multi-user collaboration: see [Nucleus Guide](docs/nucleus.md)
+
+### View Metrics Dashboard
+
+If dashboard is enabled (`monitoring.dashboardEnabled: true` in `config.json`), access via `DashboardUrl` from CDK outputs.
 
 ## Clean Up
 
@@ -121,100 +100,15 @@ Wait for fleet to stop, then destroy infrastructure:
 cd infra && cdk destroy
 ```
 
+**Note**: If Nucleus is enabled, the EC2 instance and EBS volume are deleted with the stack. Secrets Manager secrets enter a 7-day deletion window — delete immediately via the console if needed.
+
 Manually delete (via AWS Console):
 - AppStream image: AppStream 2.0 > Images
 - Prepared AMI: EC2 > AMIs
 - Associated EBS snapshot: EC2 > Snapshots
 
-## Configuration
+## Documentation
 
-All settings controlled via `config.json`:
-- `region` — AWS region (default: eu-central-1)
-- `fleet.instanceType` — GPU instance type (default: Accelerated.g6e.xlarge)
-- `fleet.minCapacity` / `fleet.maxCapacity` — Fleet scaling limits
-- `image.customImageName` — AppStream image name (set automatically by `prepare-ami.py` script)
-- `image.marketplaceAmiId` — Source marketplace AMI for image preparation
-- `monitoring.dashboardEnabled` — Deploy the web dashboard (S3 + CloudFront). Set to `false` to skip dashboard deployment; the metrics API remains available via CLI regardless
-
-Review and modify as needed before deployment.
-
-## Troubleshooting
-
-### Manual Image Build Alternative
-
-If `prepare-ami.py` fails (e.g., InsufficientInstanceCapacity errors):
-
-1. Launch a g6e.xlarge instance from the Omniverse marketplace AMI in AWS Console
-2. Connect via RDP/SSM and verify Omniverse and `nvidia-smi` work
-3. Stop the instance, create an AMI (Actions > Image and templates > Create image)
-4. Import into AppStream:
-   ```bash
-   aws appstream create-imported-image \
-     --name omniverse \
-     --source-ami-id <your-ami-id> \
-     --iam-role-arn <ImageImportRoleArn-from-step-1> \
-     --description "Omniverse Developer Kit with GRID drivers for G6e" \
-     --agent-software-version ALWAYS_LATEST \
-     --runtime-validation-config IntendedInstanceType=Accelerated.g6e.xlarge \
-     --region eu-central-1
-   ```
-5. Wait for import to complete, then manually update `config.json` with the image name
-
-### Service Role Missing
-
-If fleet deployment fails with "Internal Failure", the AppStream service role may be missing:
-
-```bash
-# Create service role (only needed once per account)
-aws iam create-role \
-  --role-name AmazonAppStreamServiceAccess \
-  --path /service-role/ \
-  --assume-role-policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Principal": {"Service": "appstream.amazonaws.com"},
-      "Action": "sts:AssumeRole"
-    }]
-  }'
-
-aws iam attach-role-policy \
-  --role-name AmazonAppStreamServiceAccess \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonAppStreamServiceAccess
-
-# Retry deployment
-cd infra && cdk deploy
-```
-
-### CLI Metrics Check
-
-Verify metrics appear in CloudWatch:
-
-```bash
-for metric in InSessionLatency FramesPerSecond Bandwidth CpuUtilizationInstance; do
-  echo "=== $metric ==="
-  aws cloudwatch get-metric-statistics \
-    --namespace AWS/AppStream \
-    --metric-name $metric \
-    --dimensions Name=Fleet,Value=appstream-omniverse-fleet \
-    --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
-    --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
-    --period 60 \
-    --statistics Average,Maximum,Minimum \
-    --region eu-central-1
-done
-```
-
-### Other Common Issues
-
-**`prepare-ami.py` fails with InsufficientInstanceCapacity**
-- G6e capacity exhausted in selected AZ. Try different AZ or use manual alternative above.
-
-**Metrics not appearing in dashboard**
-- Ensure you've created an active streaming session
-- Wait 2-3 minutes for CloudWatch metrics to propagate
-- Verify metrics in CLI using the test commands above
-
-**Dashboard shows "Failed to fetch sessions"**
-- Check API Gateway logs in CloudWatch (`/aws/lambda/metrics-collector-lambda`)
-- Verify fleet is RUNNING and has active or recent sessions
+- [Configuration Reference](docs/configuration.md) — All config.json settings
+- [Troubleshooting Guide](docs/troubleshooting.md) — Common issues and solutions
+- [Nucleus Guide](docs/nucleus.md) — Multi-user collaboration setup

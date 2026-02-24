@@ -3,8 +3,10 @@ node_modules/
 
 # Build outputs
 dist/
+dist-ssr/
 build/
 cdk.out/
+.cdk.staging
 
 # Python
 __pycache__/
@@ -54,6 +56,14 @@ web/metrics-dashboard/public/runtime-config.json
 CLAUDE.md
 .claude/
 .claudeignore
+
+# Local research and notes (not for repo)
+# docs/ - now used for actual project documentation
+
+# Internal working files (troubleshooting screenshots, debug images at project root)
+nucleus_latency.png
+omniverse.png
+*.local
 
 # Logs
 *.log

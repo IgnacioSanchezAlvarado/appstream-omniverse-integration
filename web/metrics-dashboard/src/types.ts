@@ -40,4 +40,26 @@ export interface Session {
 export interface RuntimeConfig {
   apiUrl: string;
   apiKey: string;
+  nucleusEnabled?: boolean;
+}
+
+export interface NucleusStatus {
+  status: string;
+  instanceId: string;
+  privateIp: string;
+  connectionString: string;
+  launchTime: string;
+  ssmOnline: boolean;
+  webUiUrl: string;
+}
+
+export interface NucleusMetricsResponse {
+  metrics: Record<string, MetricData>;
+  summary: Record<string, MetricSummary>;
+  query: {
+    instanceId: string;
+    startTime: string;
+    endTime: string;
+    period: number;
+  };
 }
