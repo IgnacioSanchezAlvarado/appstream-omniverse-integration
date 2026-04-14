@@ -58,7 +58,8 @@ Approval typically takes 1-2 business days. Wait for both quotas to be approved 
 ### Step 1: Deploy Base Infrastructure
 
 ```bash
-cd web/metrics-dashboard                                                                                                        npm install
+cd web/metrics-dashboard
+npm install
 npm run build
 ```
 
