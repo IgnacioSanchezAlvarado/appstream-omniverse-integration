@@ -768,14 +768,15 @@ def main():
         print('=' * 60)
 
         if appstream_image_name:
+            # Success path - AppStream import completed
             print('\nNext steps:')
             print(f'  1. Deploy the fleet with new image: cd infra && cdk deploy')
             print(f'  2. Start the fleet and test streaming session')
             print(f'  3. Verify Omniverse and GPU drivers: nvidia-smi')
-        else:
+        elif args.skip_appstream_import:
+            # Intentional skip - user chose not to import
             print('\nNext steps:')
-            if args.skip_appstream_import:
-                print('  (AppStream import skipped with --skip-appstream-import flag)')
+            print('  (AppStream import skipped with --skip-appstream-import flag)')
             print('  1. Import AMI to AppStream via CLI:')
             print(f'     aws appstream create-imported-image \\')
             print(f'       --name {args.project_name}-<timestamp> \\')
@@ -789,8 +790,33 @@ def main():
             print(f'     Instance type: Accelerated.g6e.xlarge')
             print(f'     IAM role: {args.project_name}-image-import-role')
             print('  3. Wait for image Available (~30 min)')
-            print('  4. Update config.json: image.customImageName')
+            print('  4. Update config.json: image.customImageName = "<image-name>"')
             print('  5. Run: cd infra && cdk deploy')
+        else:
+            # FAILED import - make it loud and exit with error
+            print('\n' + '!' * 60)
+            print('  APPSTREAM IMAGE IMPORT FAILED')
+            print('  The AMI was created but could not be imported to AppStream.')
+            print('  config.json was NOT updated. The fleet will NOT be created')
+            print('  until you complete the import manually.')
+            print('!' * 60)
+            print('\nManual recovery steps:')
+            print(f'  1. Import AMI to AppStream via CLI:')
+            print(f'     aws appstream create-imported-image \\')
+            print(f'       --name {args.project_name}-<timestamp> \\')
+            print(f'       --source-image-id {ami_id} \\')
+            print(f'       --iam-role-arn <image-import-role-arn> \\')
+            print(f'       --runtime-validation-config IntendedInstanceType=Accelerated.g6e.xlarge \\')
+            print(f'       --agent-software-version ALWAYS_LATEST \\')
+            print(f'       --region {args.region}')
+            print('  2. Or use AppStream console > Images > Import Image')
+            print(f'     AMI ID: {ami_id}')
+            print(f'     Instance type: Accelerated.g6e.xlarge')
+            print(f'     IAM role: {args.project_name}-image-import-role')
+            print('  3. Wait for image Available (~30 min)')
+            print('  4. Update config.json: image.customImageName = "<image-name>"')
+            print('  5. Run: cd infra && cdk deploy')
+            sys.exit(1)
 
     finally:
         if args.testing:
