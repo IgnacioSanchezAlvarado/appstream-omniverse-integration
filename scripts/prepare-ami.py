@@ -338,7 +338,7 @@ def discover_default_vpc_subnets(ec2):
         return []
 
 
-def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project_name, profile_name, instance_types=None):
+def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project_name, profile_name, instance_types=None, grid_driver_s3_path='s3://ec2-windows-nvidia-drivers/latest/'):
     """Try instance types across subnets until one succeeds.
 
     Tries in order:
@@ -347,8 +347,15 @@ def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project
     3. Default VPC subnets (as last resort, with public IP)
     """
     global _instance_id
-    with open(USERDATA_FILE, 'rb') as f:
-        userdata_raw = f.read()
+    with open(USERDATA_FILE, 'r', encoding='utf-8') as f:
+        userdata_text = f.read()
+
+    # Replace GRID driver S3 path with config value
+    userdata_text = userdata_text.replace(
+        's3://ec2-windows-nvidia-drivers/latest/',
+        grid_driver_s3_path
+    )
+    userdata_raw = userdata_text.encode('utf-8')
     userdata_b64 = base64.b64encode(gzip.compress(userdata_raw)).decode()
 
     types_to_try = instance_types or DEFAULT_INSTANCE_TYPES
@@ -509,8 +516,12 @@ def main():
                 base_ami = args.marketplace_ami
                 log(f'Using marketplace AMI from CLI: {base_ami}')
                 log('WARNING: Marketplace AMIs carry product codes that may block AppStream import.')
+            elif config.get('image', {}).get('baseAmiId'):
+                base_ami = config['image']['baseAmiId']
+                log(f'Using pinned base AMI from config: {base_ami}')
             else:
                 base_ami = get_base_ami(ssm, args.region, ami_param)
+                log('WARNING: Using latest AMI from SSM. Pin image.baseAmiId in config.json to avoid breakage.')
 
             # Step 2: Discover infrastructure
             log('--- Step 2/8: Discovering infrastructure ---')
@@ -533,8 +544,9 @@ def main():
 
             # Step 4: Launch GPU instance (tries types from config in order)
             ami_builder_types = config.get('amiBuilder', {}).get('instanceTypes', None)
+            grid_driver_s3_path = config.get('amiBuilder', {}).get('gridDriverS3Path', 's3://ec2-windows-nvidia-drivers/latest/')
             log(f'--- Step 4/8: Launching GPU instance (preference: {ami_builder_types or DEFAULT_INSTANCE_TYPES}) ---')
-            inst_id, inst_type = launch_instance(ec2, base_ami, private_subnets, public_subnets, sg_id, args.project_name, profile_name, ami_builder_types)
+            inst_id, inst_type = launch_instance(ec2, base_ami, private_subnets, public_subnets, sg_id, args.project_name, profile_name, ami_builder_types, grid_driver_s3_path)
 
             # Step 5: Wait for setup and ensure userdata executes
             log('--- Step 5/8: Waiting for instance + GRID driver install ---')
@@ -590,6 +602,12 @@ def main():
                 # Read and encode userdata.ps1 (strip <powershell> tags)
                 with open(USERDATA_FILE, encoding="utf-8") as f:
                     userdata_content = f.read()
+
+                # Replace GRID driver S3 path with config value
+                userdata_content = userdata_content.replace(
+                    's3://ec2-windows-nvidia-drivers/latest/',
+                    grid_driver_s3_path
+                )
 
                 # Remove XML tags
                 userdata_content = userdata_content.replace('<powershell>', '').replace('</powershell>', '').strip()
