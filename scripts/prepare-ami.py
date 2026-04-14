@@ -223,7 +223,7 @@ def get_image_import_role_arn(cfn, sts, project_name, region):
     return role_arn
 
 
-def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, region, config):
+def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, region, config, skip_runtime_validation=False):
     """Import AMI to AppStream as a custom image."""
     log('--- Step 7/8: Importing AMI to AppStream ---')
 
@@ -247,12 +247,15 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
         '--name', image_name,
         '--source-ami-id', ami_id,
         '--iam-role-arn', role_arn,
-        '--runtime-validation-config', json.dumps({'IntendedInstanceType': 'Accelerated.g6e.xlarge'}),
         '--agent-software-version', 'ALWAYS_LATEST',
         '--description', f'AppStream image from {ami_id}',
         '--display-name', 'Omniverse Developer Kit',
         '--region', region,
     ]
+    if not skip_runtime_validation:
+        cmd.extend(['--runtime-validation-config', json.dumps({'IntendedInstanceType': 'Accelerated.g6e.xlarge'})])
+    else:
+        log('Skipping runtime validation (--skip-runtime-validation flag set)')
     # Add tags if present
     if appstream_tags:
         cmd.extend(['--tags', json.dumps(appstream_tags)])
@@ -482,9 +485,14 @@ def main():
     parser.add_argument('--testing', action='store_true', help='Keep instance running for manual testing')
     parser.add_argument('--from-instance', help='Resume AMI creation from existing instance ID')
     parser.add_argument('--skip-appstream-import', action='store_true', help='Skip automatic AppStream image import')
+    parser.add_argument('--skip-runtime-validation', action='store_true',
+                        help='Skip AppStream runtime validation during import (use if g6e validation is failing)')
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, handle_interrupt)
+
+    if args.skip_runtime_validation:
+        log('Runtime validation will be skipped for AppStream import')
 
     ec2 = boto3.client('ec2', region_name=args.region)
     iam = boto3.client('iam', region_name=args.region)
@@ -760,7 +768,7 @@ def main():
         timeout_image_name = None
         if not args.skip_appstream_import and not args.testing:
             appstream_image_name = import_to_appstream(
-                appstream, cfn, sts, ami_id, ami_name, args.project_name, args.region, config
+                appstream, cfn, sts, ami_id, ami_name, args.project_name, args.region, config, args.skip_runtime_validation
             )
 
             if appstream_image_name and appstream_image_name.startswith('TIMEOUT:'):
