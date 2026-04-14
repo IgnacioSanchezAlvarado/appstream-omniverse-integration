@@ -55,6 +55,23 @@ Approval typically takes 1-2 business days. Wait for both quotas to be approved 
 
 ## Deploy
 
+### Step 0: Configure
+
+  Review `config.json` and update these settings:
+
+  | Setting | Default | Action |
+  |---------|---------|--------|
+  | `region` | `eu-central-1` | Set to your target AWS region |
+  | `dashboard.adminEmail` | `admin@example.com` | **Must change** — email for Cognito admin user |
+  | `nucleus.enabled` | `true` | Set to `false` if you don't need a Nucleus collaboration server |
+  | `image.baseAmiId` | `ami-0d58785614c76b704` | Pinned Windows Server 2022 AMI (eu-central-1). Change if deploying to a different region |
+
+  Fleet and stack names are derived from `projectName` (default: `appstream-omniverse`):
+  - Fleet: `{projectName}-fleet`
+  - Stack: `{projectName}-stack`
+
+  See [Configuration Reference](docs/configuration.md) for all settings.
+
 ### Step 1: Deploy Base Infrastructure
 
 ```bash
@@ -78,7 +95,10 @@ cd ..
 python scripts/prepare-ami.py
 ```
 
-Launches G6e instance from Omniverse marketplace AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes. This script needs G instance availability, if you get an error wait some minutes/hours and try again.
+Launches G6e instance from pinned Windows Server 2022 base AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes. This script needs G instance availability, if you get an error wait some minutes/hours and try again.
+
+> **How it works**: CDK uses a two-phase deployment. In Step 1, `customImageName` is empty so only base infrastructure is created. After
+  `prepare-ami.py` sets the image name in `config.json`, Step 3 detects it and creates the fleet and stack.
 
 ### Step 3: Deploy Fleet
 
@@ -89,6 +109,9 @@ cd infra && cdk deploy
 Deploys AppStream fleet (STOPPED, 0 instances) and stack. GPU instances are billed per hour, so the fleet starts empty to avoid unexpected costs.
 
 ### Step 4: Start the Fleet
+
+ > **Note**: The commands below use the default `projectName` (`appstream-omniverse`). If you changed it in `config.json`, replace
+  `appstream-omniverse-fleet` and `appstream-omniverse-stack` with `{your-project-name}-fleet` and `{your-project-name}-stack`.
 
 Set desired capacity to 1 and start the fleet:
 
