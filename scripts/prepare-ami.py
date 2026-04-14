@@ -265,8 +265,8 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
     log(f'AppStream image import started: {image_name}')
 
     # Poll for image availability
-    log('Waiting for AppStream image to become available (max 45 minutes)...')
-    max_attempts = 90  # 90 * 30s = 45 minutes
+    log('Waiting for AppStream image to become available (max 60 minutes)...')
+    max_attempts = 120  # 120 * 30s = 60 minutes
     for attempt in range(max_attempts):
         try:
             resp = appstream.describe_images(Names=[image_name])
@@ -296,8 +296,8 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
         if attempt < max_attempts - 1:
             time.sleep(30)  # nosemgrep: arbitrary-sleep - polling AppStream image status
 
-    log('ERROR: Timeout waiting for AppStream image (45 minutes)')
-    return None
+    log(f'Timeout waiting for AppStream image (60 minutes). Import is still in progress.')
+    return f'TIMEOUT:{image_name}'
 
 
 def update_config_with_image(image_name, project_name):
@@ -757,17 +757,25 @@ def main():
 
         # Step 7: Import to AppStream (unless --skip-appstream-import or --testing)
         appstream_image_name = None
+        timeout_image_name = None
         if not args.skip_appstream_import and not args.testing:
             appstream_image_name = import_to_appstream(
                 appstream, cfn, sts, ami_id, ami_name, args.project_name, args.region, config
             )
 
+            if appstream_image_name and appstream_image_name.startswith('TIMEOUT:'):
+                timeout_image_name = appstream_image_name.split(':', 1)[1]
+                appstream_image_name = None
+
             if appstream_image_name:
                 # Update config.json
                 if update_config_with_image(appstream_image_name, args.project_name):
                     log('Config updated successfully.')
+            elif timeout_image_name:
+                log(f'AppStream image import is still in progress: {timeout_image_name}')
+                log('The import exceeded the wait time but may still succeed.')
             else:
-                log('WARNING: AppStream image import failed or timed out.')
+                log('WARNING: AppStream image import failed.')
                 log('You can manually import the AMI using the instructions below.')
 
         # Step 8: Cleanup
@@ -783,6 +791,8 @@ def main():
         print(f'  TPM:        {img.get("TpmSupport")}')
         if appstream_image_name:
             print(f'  AppStream:  {appstream_image_name} (AVAILABLE)')
+        elif timeout_image_name:
+            print(f'  AppStream:  {timeout_image_name} (STILL IN PROGRESS)')
         print('=' * 60)
 
         if appstream_image_name:
@@ -791,6 +801,22 @@ def main():
             print(f'  1. Deploy the fleet with new image: cd infra && cdk deploy')
             print(f'  2. Start the fleet and test streaming session')
             print(f'  3. Verify Omniverse and GPU drivers: nvidia-smi')
+        elif timeout_image_name:
+            # Timeout - import still in progress on AWS side
+            print('\n' + '-' * 60)
+            print('  APPSTREAM IMAGE IMPORT STILL IN PROGRESS')
+            print('  The import exceeded the script wait time but is still')
+            print('  running on AWS. It may still succeed.')
+            print('-' * 60)
+            print(f'\nCheck status:')
+            print(f'  aws appstream describe-images \\')
+            print(f'    --names {timeout_image_name} \\')
+            print(f'    --region {args.region} \\')
+            print(f'    --query "Images[0].State" --output text')
+            print(f'\nOnce the image shows AVAILABLE:')
+            print(f'  1. Update config.json: set image.customImageName = "{timeout_image_name}"')
+            print(f'  2. Deploy the fleet: cd infra && cdk deploy')
+            print(f'  3. Start the fleet and test streaming session')
         elif args.skip_appstream_import:
             # Intentional skip - user chose not to import
             print('\nNext steps:')
