@@ -74,10 +74,11 @@ Deploys VPC, API Gateway + Lambda for metrics, S3 + CloudFront for dashboard, an
 ### Step 2: Build AppStream Image
 
 ```bash
+cd ..
 python scripts/prepare-ami.py
 ```
 
-Launches G6e instance from Omniverse marketplace AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes.
+Launches G6e instance from Omniverse marketplace AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes. This script needs G instance availability, if you get an error wait some minutes/hours and try again.
 
 ### Step 3: Deploy Fleet
 
