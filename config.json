@@ -11,6 +11,7 @@
   },
   "image": {
     "baseAmiParameter": "/aws/service/ami-windows-latest/TPM-Windows_Server-2022-English-Full-Base",
+    "baseAmiId": "ami-0d58785614c76b704",
     "marketplaceAmiId": "ami-XXXXXXXXXXXXXXXXX",
     "customImageName": ""
   },
@@ -21,7 +22,9 @@
       "g6e.2xlarge",
       "g6e.4xlarge",
       "g6e.8xlarge"
-    ]
+    ],
+    "gridDriverS3Path": "s3://ec2-windows-nvidia-drivers/grid-19.4/",
+    "gridDriverVersion": "582.16"
   },
   "monitoring": {
     "dashboardEnabled": true,
