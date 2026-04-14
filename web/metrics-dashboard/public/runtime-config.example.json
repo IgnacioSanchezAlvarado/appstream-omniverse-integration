@@ -1,0 +1,4 @@
+{
+  "apiUrl": "https://your-api-gateway-url.execute-api.region.amazonaws.com/prod",
+  "apiKey": "REPLACE_WITH_API_KEY"
+}

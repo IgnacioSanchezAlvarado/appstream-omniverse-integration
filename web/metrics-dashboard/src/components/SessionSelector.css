@@ -1,0 +1,143 @@
+.session-selector {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-left-color: var(--color-accent);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.session-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  text-transform: uppercase;
+}
+
+.label-icon {
+  font-size: 1rem;
+  color: var(--color-accent);
+}
+
+.session-select-container {
+  position: relative;
+  flex: 1;
+}
+
+.session-select {
+  width: 100%;
+  padding: 8px 12px;
+  padding-right: 36px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.session-select:hover {
+  border-color: var(--color-border-light);
+}
+
+.session-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-light);
+}
+
+.session-select option {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  padding: 8px;
+}
+
+.select-arrow {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  pointer-events: none;
+  font-size: 0.7rem;
+}
+
+/* Session Info */
+.session-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.info-label {
+  color: var(--color-text-muted);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.info-value {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.state-badge {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.info-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .session-selector {
+    border-left-width: 2px;
+  }
+
+  .session-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+  }
+
+  .info-divider {
+    display: none;
+  }
+
+  .info-item {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

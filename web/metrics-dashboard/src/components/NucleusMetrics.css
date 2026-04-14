@@ -1,0 +1,103 @@
+.nucleus-metrics-section {
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-xl);
+  border-top: 1px solid var(--color-border);
+}
+
+.nucleus-section-header {
+  margin-bottom: var(--spacing-lg);
+}
+
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.section-prefix {
+  color: #f97316;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-right: var(--spacing-xs);
+}
+
+.section-subtitle {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.latency-comparison-container {
+  margin-bottom: var(--spacing-xl);
+}
+
+.latency-comparison-chart {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-top-width: 3px;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  transition: var(--transition-smooth);
+  box-shadow: var(--shadow-card);
+}
+
+.latency-comparison-chart:hover {
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-border-light);
+}
+
+.latency-comparison-chart .chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.latency-comparison-chart .chart-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.latency-comparison-chart .chart-unit {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.latency-comparison-chart .chart-body {
+  position: relative;
+  height: 350px;
+  margin-bottom: var(--spacing-md);
+}
+
+.latency-comparison-chart .chart-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.latency-comparison-chart .chart-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.latency-comparison-chart .legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.glow-nucleus-latency { color: #f97316; }
+.glow-nucleus-cpu { color: #8b5cf6; }
+.glow-nucleus-memory { color: #ec4899; }
+.glow-nucleus-disk { color: #14b8a6; }
