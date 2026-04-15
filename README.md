@@ -119,9 +119,9 @@ Set desired capacity to 1 and start the fleet:
 aws appstream update-fleet \
   --name appstream-omniverse-fleet \
   --compute-capacity DesiredInstances=1 \
-  --region eu-central-1
-
-aws appstream start-fleet \
+  --region eu-central-1 \
+  --no-cli-pager \
+&& aws appstream start-fleet \
   --name appstream-omniverse-fleet \
   --region eu-central-1
 ```
