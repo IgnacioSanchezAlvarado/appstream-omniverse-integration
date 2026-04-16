@@ -237,11 +237,70 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
     # Generate AppStream image name (timestamp-based, same as AMI)
     # Note: AppStream image names cannot start with 'appstream', 'aws', 'amazon'
     timestamp = ami_name.split('-')[-1]  # Extract timestamp from ami_name
-    image_name = f'omniverse-g6e-{timestamp}'
+    base_image_name = f'omniverse-g6e-{timestamp}'
 
+    if skip_runtime_validation:
+        log('Skipping runtime validation (--skip-runtime-validation flag set)')
+        return _do_import(appstream, base_image_name, ami_id, role_arn, region, appstream_tags, None)
+
+    # Build list of validation instance types to try (ordered by size for cost efficiency)
+    validation_types = [
+        'Accelerated.g6e.xlarge',
+        'Accelerated.g6e.2xlarge',
+        'Accelerated.g6e.4xlarge',
+        'Accelerated.g6e.8xlarge',
+    ]
+
+    # Pre-check quotas to skip types with quota=0
+    sq = boto3.client('service-quotas', region_name=region)
+    valid_types = []
+    for vtype in validation_types:
+        try:
+            paginator = sq.get_paginator('list_service_quotas')
+            for page in paginator.paginate(ServiceCode='appstream2'):
+                for quota in page['Quotas']:
+                    if vtype in quota['QuotaName'] and 'image builders' in quota['QuotaName']:
+                        if quota['Value'] > 0:
+                            valid_types.append(vtype)
+                            log(f'  {vtype}: quota={int(quota["Value"])} (eligible)')
+                        else:
+                            log(f'  {vtype}: quota=0 (skipping)')
+                        break
+                else:
+                    continue
+                break
+        except Exception as e:
+            log(f'  {vtype}: quota check failed ({e}), will try anyway')
+            valid_types.append(vtype)
+
+    if not valid_types:
+        log('WARNING: All validation instance types have quota=0. Trying anyway with g6e.xlarge...')
+        valid_types = ['Accelerated.g6e.xlarge']
+
+    log(f'Validation instance types to try: {valid_types}')
+
+    # Try each validation type
+    for i, vtype in enumerate(valid_types):
+        # Use unique name per attempt so failed images don't block retries
+        image_name = base_image_name if i == 0 else f'{base_image_name}-v{i+1}'
+        log(f'Attempting import with validation type: {vtype} (image: {image_name})')
+
+        result = _do_import(appstream, image_name, ami_id, role_arn, region, appstream_tags, vtype)
+        if result is not None:
+            return result
+
+        # If we get here, this attempt failed — try next type
+        if i < len(valid_types) - 1:
+            log(f'Trying next validation instance type...')
+
+    log('ERROR: All validation instance types failed.')
+    return None
+
+
+def _do_import(appstream, image_name, ami_id, role_arn, region, appstream_tags, validation_type):
+    """Attempt a single AppStream image import. Returns image_name on success, None on failure."""
     log(f'Creating AppStream image: {image_name}')
 
-    # Build AWS CLI command (boto3 doesn't support create_imported_image in version 1.35.49)
     cmd = [
         'aws', 'appstream', 'create-imported-image',
         '--name', image_name,
@@ -252,18 +311,19 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
         '--display-name', 'Omniverse Developer Kit',
         '--region', region,
     ]
-    if not skip_runtime_validation:
-        cmd.extend(['--runtime-validation-config', json.dumps({'IntendedInstanceType': 'Accelerated.g6e.xlarge'})])
-    else:
-        log('Skipping runtime validation (--skip-runtime-validation flag set)')
-    # Add tags if present
+    if validation_type:
+        cmd.extend(['--runtime-validation-config', json.dumps({'IntendedInstanceType': validation_type})])
     if appstream_tags:
         cmd.extend(['--tags', json.dumps(appstream_tags)])
 
     # nosemgrep: dangerous-subprocess-use-audit - cmd values from trusted config and AWS API responses only
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        log(f'ERROR: Failed to create AppStream imported image: {result.stderr}')
+        stderr = result.stderr
+        if 'LimitExceededException' in stderr:
+            log(f'  Quota exceeded for {validation_type}, skipping.')
+            return None
+        log(f'ERROR: Failed to create AppStream imported image: {stderr}')
         return None
     log(f'AppStream image import started: {image_name}')
 
@@ -285,10 +345,17 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
                 log(f'AppStream image is AVAILABLE: {image_name}')
                 return image_name
             elif state == 'FAILED':
+                reason = image.get('StateChangeReason', {}).get('Message', 'Unknown')
                 errors = image.get('ImageErrors', [])
-                log(f'ERROR: AppStream image import FAILED.')
+                log(f'AppStream image import FAILED: {reason}')
                 for error in errors:
                     log(f'  Error Code: {error.get("ErrorCode")}, Message: {error.get("ErrorMessage")}')
+                # Clean up failed image
+                try:
+                    appstream.delete_image(Name=image_name)
+                    log(f'  Cleaned up failed image: {image_name}')
+                except Exception:
+                    pass
                 return None
             else:
                 if attempt % 4 == 0:  # Log every 2 minutes
