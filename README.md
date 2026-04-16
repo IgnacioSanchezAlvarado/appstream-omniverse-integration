@@ -64,7 +64,7 @@ Approval typically takes 1-2 business days. Wait for both quotas to be approved 
   | `region` | `eu-central-1` | Set to your target AWS region |
   | `dashboard.adminEmail` | `admin@example.com` | **Must change** — email for Cognito admin user |
   | `nucleus.enabled` | `true` | Set to `false` if you don't need a Nucleus collaboration server |
-  | `image.baseAmiId` | `ami-0d58785614c76b704` | Pinned Windows Server 2022 AMI (eu-central-1). Change if deploying to a different region |
+  | `image.baseAmiId` | `ami-0d58785614c76b704` | Pinned Windows Server 2022 AMI. Auto-validated at build time; falls back to SSM if not found in target region |
 
   Fleet and stack names are derived from `projectName` (default: `appstream-omniverse`):
   - Fleet: `{projectName}-fleet`
