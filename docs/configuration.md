@@ -18,8 +18,7 @@
 
   ### Image
   - `image.customImageName` — AppStream image name (set automatically by `prepare-ami.py`)
-  - `image.baseAmiId` — Pinned Windows Server 2022 AMI ID for image building (region-specific). If empty, falls back to latest AMI from SSM (not
-  recommended — updates can break AppStream import)
+  - `image.baseAmiId` — Pinned Windows Server 2022 AMI ID for image building. Auto-validated at runtime; if not found in the target region, falls back to SSM parameter lookup automatically. Pin to a known-good AMI version to avoid breakage from Windows updates
   - `image.baseAmiParameter` — SSM parameter path for latest Windows AMI. Only used when `baseAmiId` is empty
   - `image.marketplaceAmiId` — Omniverse marketplace AMI ID. Not used by default (product codes block AppStream import)
 
