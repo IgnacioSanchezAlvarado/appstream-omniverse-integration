@@ -526,7 +526,16 @@ def main():
                 log('WARNING: Marketplace AMIs carry product codes that may block AppStream import.')
             elif config.get('image', {}).get('baseAmiId'):
                 base_ami = config['image']['baseAmiId']
-                log(f'Using pinned base AMI from config: {base_ami}')
+                try:
+                    resp = ec2.describe_images(ImageIds=[base_ami])
+                    if not resp['Images']:
+                        raise ValueError('AMI not found')
+                    log(f'Using pinned base AMI from config: {base_ami}')
+                except Exception:
+                    log(f'WARNING: Pinned AMI {base_ami} not found in {args.region} — falling back to SSM lookup')
+                    base_ami = get_base_ami(ssm, args.region, ami_param)
+                    log(f'Resolved AMI for {args.region}: {base_ami}')
+                    log(f'TIP: Pin this AMI in config.json → image.baseAmiId: "{base_ami}"')
             else:
                 base_ami = get_base_ami(ssm, args.region, ami_param)
                 log('WARNING: Using latest AMI from SSM. Pin image.baseAmiId in config.json to avoid breakage.')
