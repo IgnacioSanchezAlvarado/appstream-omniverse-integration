@@ -31,12 +31,17 @@
     "CDK base stack",
     "dashboard"
   ],
-  "hourly_cost_usd": 0,
+  "hourly_cost_usd": 3.52,
   "hourly_cost_usd_source": {
-    "placeholder": "<HOURLY_COST_USD>",
-    "status": "PLACEHOLDER: hourly_cost_usd above is 0 until the owner replaces it; the launcher contract requires a number here",
+    "status": "FROM PRICE LIST API: 3.52 USD is the on-demand price per instance-hour of one Accelerated.g6e.xlarge AppStream 2.0 fleet instance (Windows, License Included, instanceFunction Fleet, usagetype EUC1-Accelerated.g6e.xlarge-fl, 3.515 USD rounded to 2 decimals) in eu-central-1 (EU (Frankfurt)), retrieved 2026-09-29 with aws pricing get-products (service code AmazonAppStream, endpoint us-east-1). The c5.2xlarge Nucleus EC2 hour is not included; see nucleus_hourly_cost_usd.",
+    "region": "eu-central-1",
+    "retrieved": "2026-09-29",
+    "fleet_price_exact_usd": 3.515,
+    "command": "aws pricing get-products --service-code AmazonAppStream --region us-east-1 --filters Type=TERM_MATCH,Field=location,Value=\"EU (Frankfurt)\" Type=TERM_MATCH,Field=instanceType,Value=Accelerated.g6e.xlarge",
+    "nucleus_hourly_cost_usd": 0.388,
+    "nucleus_note": "c5.2xlarge Linux on-demand EC2 instance-hour in eu-central-1 (usagetype EUC1-BoxUsage:c5.2xlarge), retrieved 2026-09-29 with aws pricing get-products --service-code AmazonEC2 --region us-east-1; add it to hourly_cost_usd while config.json nucleus.enabled is true (3.52 + 0.39 = 3.91 USD per hour)",
     "covers": "one Accelerated.g6e.xlarge AppStream 2.0 instance-hour (ON_DEMAND fleet, eu-central-1); add one c5.2xlarge EC2 instance-hour while nucleus.enabled is true",
-    "note": "owner fills from the AppStream pricing page",
+    "note": "owner fills from the AppStream pricing page to override the Price List API value",
     "pricing_page": "https://aws.amazon.com/appstream2/pricing/"
   },
   "max_running_minutes": 120,
