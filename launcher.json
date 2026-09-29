@@ -1,0 +1,67 @@
+{
+  "name": "appstream-omniverse",
+  "title": "NVIDIA Omniverse on AppStream 2.0",
+  "description": "NVIDIA Omniverse Kit streamed from an AppStream 2.0 GPU fleet (Accelerated.g6e.xlarge, NICE DCV) in eu-central-1, with an optional Nucleus EC2 server and a CloudWatch metrics dashboard behind CloudFront. Start sets the fleet to one instance and starts it (and the Nucleus instance when configured); Stop scales the fleet to zero and stops both. The AppStream image, the CDK base stack and the dashboard stay deployed.",
+  "provider": "appstream",
+  "account": "${demo.appstream_omniverse.account}",
+  "region": "eu-central-1",
+  "role_arn": "${demo.appstream_omniverse.role_arn}",
+  "start": {
+    "fleet_name": "appstream-omniverse-fleet",
+    "desired_instances": 1,
+    "nucleus_instance_id": "${demo.appstream_omniverse.nucleus_instance_id}",
+    "sequence": [
+      "appstream:UpdateFleet Name=appstream-omniverse-fleet ComputeCapacity.DesiredInstances=1",
+      "appstream:StartFleet Name=appstream-omniverse-fleet",
+      "ec2:StartInstances InstanceIds=<NUCLEUS_INSTANCE_ID> (only when config.json nucleus.enabled is true)"
+    ]
+  },
+  "stop": {
+    "fleet_name": "appstream-omniverse-fleet",
+    "desired_instances": 0,
+    "nucleus_instance_id": "${demo.appstream_omniverse.nucleus_instance_id}",
+    "sequence": [
+      "appstream:UpdateFleet Name=appstream-omniverse-fleet ComputeCapacity.DesiredInstances=0",
+      "appstream:StopFleet Name=appstream-omniverse-fleet",
+      "ec2:StopInstances InstanceIds=<NUCLEUS_INSTANCE_ID> (only when config.json nucleus.enabled is true)"
+    ]
+  },
+  "keep": [
+    "AppStream image",
+    "CDK base stack",
+    "dashboard"
+  ],
+  "hourly_cost_usd": 0,
+  "hourly_cost_usd_source": {
+    "placeholder": "<HOURLY_COST_USD>",
+    "status": "PLACEHOLDER: hourly_cost_usd above is 0 until the owner replaces it; the launcher contract requires a number here",
+    "covers": "one Accelerated.g6e.xlarge AppStream 2.0 instance-hour (ON_DEMAND fleet, eu-central-1); add one c5.2xlarge EC2 instance-hour while nucleus.enabled is true",
+    "note": "owner fills from the AppStream pricing page",
+    "pricing_page": "https://aws.amazon.com/appstream2/pricing/"
+  },
+  "max_running_minutes": 120,
+  "url_source": {
+    "kind": "cloudformation-output",
+    "stack": "AppStreamOmniverseStack",
+    "output": "DashboardUrl",
+    "value": "<DASHBOARD_URL>",
+    "note": "The demo link is the metrics dashboard (CloudFront URL, DashboardUrl output of stack AppStreamOmniverseStack). The Omniverse streaming URL is not a fixed link: it is created per session with 'aws appstream create-streaming-url' against AppStream stack appstream-omniverse-stack and fleet appstream-omniverse-fleet, as in the README section 'Test It'."
+  },
+  "nucleus_instance_source": {
+    "kind": "cloudformation-output",
+    "stack": "AppStreamOmniverseStack",
+    "output": "NucleusInstanceId",
+    "value": "<NUCLEUS_INSTANCE_ID>",
+    "note": "Only present when config.json nucleus.enabled is true. The launcher reads the id from its own config.json key demos.appstream_omniverse.nucleus_instance_id; an empty string means no Nucleus instance."
+  },
+  "params": {
+    "fleet_instance_type": "Accelerated.g6e.xlarge",
+    "gpu": "NVIDIA L40S",
+    "streaming_protocol": "NICE_DCV",
+    "nucleus_instance_type": "c5.2xlarge",
+    "start_to_running_minutes": "10-15"
+  },
+  "links": {
+    "repository": "https://github.com/IgnacioSanchezAlvarado/appstream-omniverse-integration"
+  }
+}
