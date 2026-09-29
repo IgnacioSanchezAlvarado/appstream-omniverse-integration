@@ -135,9 +135,9 @@ aws appstream describe-fleets \
   --query "Fleets[0].State"
 ```
 
-### Platform deploy and verify commands
+### Platform deploy, verify and destroy commands
 
-The demo platform runs `bash scripts/deploy.sh` as the deploy command and `bash scripts/verify.sh` as the verify command. The CDK stack is deployed by the owner with the steps above, so `deploy.sh` skips `cdk deploy` unless `AGP_DEPLOY_INFRA=1` is set; it prepares `.venv`. `verify.sh` runs `scripts/verify-showcase.sh` when present, checks `.venv/bin/python`, and (with `AGP_DEPLOY_INFRA=1`) checks the stack is `CREATE_COMPLETE`/`UPDATE_COMPLETE`.
+The demo platform runs `bash scripts/deploy.sh` as the deploy command, `bash scripts/verify.sh` as the verify command and `bash scripts/destroy.sh` as the destroy command. The CDK stack is deployed by the owner with the steps above, so `deploy.sh` skips `cdk deploy` unless `AGP_DEPLOY_INFRA=1` is set; it prepares `.venv`. `verify.sh` runs `scripts/verify-showcase.sh` when present, checks `.venv/bin/python`, and (with `AGP_DEPLOY_INFRA=1`) checks the stack is `CREATE_COMPLETE`/`UPDATE_COMPLETE`. `destroy.sh` is run only by the platform's tear-down action: it stops any running AppStream fleet in the stack, runs `npx cdk destroy --all --force` in `infra/` and prints `REMOVED <stack>` or `LEFTOVER <type> <id>` records; it exits non-zero while a stack still exists.
 
 ## Test It
 
