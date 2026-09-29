@@ -88,3 +88,9 @@ htmlcov/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Local deployed config (copy config.example.json to config.json)
+config.json
+
+# Beads database (already tracked files stay tracked)
+.beads/

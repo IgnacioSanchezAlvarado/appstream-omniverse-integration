@@ -25,6 +25,7 @@ Infrastructure deployed via AWS CDK (TypeScript):
 - Node.js 18+ and npm
 - Python 3.12+ and boto3
 - CDK CLI: `npm install -g aws-cdk`
+- Local config: `cp config.example.json config.json` (config.json is not committed; `prepare-ami.py` writes the deployed image values into it)
 
 ### Request Service Quotas (Do This First)
 
@@ -110,6 +111,15 @@ Manually delete (via AWS Console):
 - AppStream image: AppStream 2.0 > Images
 - Prepared AMI: EC2 > AMIs
 - Associated EBS snapshot: EC2 > Snapshots
+
+## On the demo hub
+
+- The fleet is stopped between meetings, so it costs nothing while idle.
+- It is started and stopped from the hub through the demo-launcher ([launcher.json](launcher.json)).
+- The hourly cost shows on the demo card.
+- The streaming URL is created per session; there is no standing link.
+
+See [docs/showcase.md](docs/showcase.md) for the hub content, [launcher.json](launcher.json) for the launcher contract and [docs/deploy-runbook.md](docs/deploy-runbook.md) for the owner's deploy runbook.
 
 ## Documentation
 
