@@ -1,8 +1,12 @@
 import json
 import os
+import re
 import boto3
 
 appstream = boto3.client('appstream', region_name=os.environ.get('REGION', 'eu-central-1'))
+
+# Regex for userId validation: alphanumeric, hyphens, underscores, dots, @
+USER_ID_PATTERN = re.compile(r'^[a-zA-Z0-9._@-]{1,128}$')
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -67,6 +71,12 @@ def create_streaming_url(event):
 
     if not stack_name or not fleet_name or not user_id:
         return response(400, {'error': 'Missing required parameters: stackName, fleetName, userId'})
+
+    # Validate userId format
+    if not USER_ID_PATTERN.match(user_id):
+        return response(400, {
+            'error': 'Invalid userId format. Must be alphanumeric (a-z, A-Z, 0-9) with optional hyphens, underscores, dots, or @ symbols. Maximum 128 characters.'
+        })
 
     result = appstream.create_streaming_url(
         StackName=stack_name,

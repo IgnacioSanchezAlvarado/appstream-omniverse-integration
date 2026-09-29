@@ -19,9 +19,9 @@ venv/
 .venv/
 
 # CDK TypeScript compiled output
-infra/*.js
-infra/*.d.ts
-infra/*.js.map
+infra/**/*.js
+infra/**/*.d.ts
+infra/**/*.js.map
 !infra/jest.config.js
 
 # IDE and editor
@@ -51,6 +51,15 @@ aws-exports.js
 
 # Runtime config (generated at deploy time with API keys)
 web/metrics-dashboard/public/runtime-config.json
+
+# Security scan reports (local)
+security-reports/
+
+# Threat model (internal)
+.threatmodel/
+
+# MCP config (local)
+.mcp.json
 
 # Claude Code (local development tool files)
 CLAUDE.md

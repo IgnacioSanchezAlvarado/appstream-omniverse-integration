@@ -15,5 +15,7 @@ module.exports = {
       { allowConstantExport: true },
     ],
     '@typescript-eslint/no-explicit-any': 'off',
+    // Disable i18n warnings (rule name may vary depending on plugin)
+    'i18next/no-literal-string': 'off',
   },
 }

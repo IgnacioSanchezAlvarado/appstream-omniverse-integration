@@ -1,5 +1,22 @@
 # AppStream Omniverse POC
 
+> ⚠️ **IMPORTANT DISCLAIMER**
+>
+> This is sample code for educational and demonstration purposes only.
+> This code is NOT intended for production use without additional security,
+> performance, and reliability considerations.
+>
+> **Before deploying to production:**
+> - Work with your security and legal teams to meet your organizational
+>   security, regulatory, and compliance requirements
+> - Conduct thorough security reviews and testing
+> - Implement appropriate monitoring, logging, and error handling
+> - Follow your organization's deployment and change management processes
+>
+> **Security Notice:** This sample code may not include all security best
+> practices required for production environments. Additional security measures
+> may be necessary based on your specific use case and regulatory requirements.
+
 AWS AppStream 2.0 streaming NVIDIA Omniverse Kit applications with GPU acceleration (G6e instances, NVIDIA L40S GPUs). Includes a metrics dashboard showing real-time FPS, latency, bandwidth, and CPU utilization from AppStream's built-in CloudWatch metrics.
 
 <table><tr>
@@ -9,7 +26,7 @@ AWS AppStream 2.0 streaming NVIDIA Omniverse Kit applications with GPU accelerat
 
 ## Architecture
 
-![Architecture](architecture.png)
+![Architecture](images/architecture.png)
 
 **VPC with private subnets** → **AppStream fleet (G6e GPU instances)** → **Nucleus server (optional)** → **CloudFront dashboard**
 
@@ -25,7 +42,6 @@ Infrastructure deployed via AWS CDK (TypeScript):
 - Node.js 18+ and npm
 - Python 3.12+ and boto3
 - CDK CLI: `npm install -g aws-cdk`
-- Local config: `cp config.example.json config.json` (config.json is not committed; `prepare-ami.py` writes the deployed image values into it)
 
 ### Request Service Quotas (Do This First)
 
@@ -39,10 +55,33 @@ Approval typically takes 1-2 business days. Wait for both quotas to be approved 
 
 ## Deploy
 
+### Step 0: Configure
+
+  Copy `config.example.json` to `config.json` (`config.json` is git-ignored), then review it and update these settings:
+
+  | Setting | Default | Action |
+  |---------|---------|--------|
+  | `region` | `eu-central-1` | Set to your target AWS region |
+  | `dashboard.adminEmail` | `admin@example.com` | **Must change** — email for Cognito admin user |
+  | `nucleus.enabled` | `true` | Set to `false` if you don't need a Nucleus collaboration server |
+  | `image.baseAmiId` | `ami-0d58785614c76b704` | Pinned Windows Server 2022 AMI. Auto-validated at build time; falls back to SSM if not found in target region |
+
+  Fleet and stack names are derived from `projectName` (default: `appstream-omniverse`):
+  - Fleet: `{projectName}-fleet`
+  - Stack: `{projectName}-stack`
+
+  See [Configuration Reference](docs/configuration.md) for all settings.
+
 ### Step 1: Deploy Base Infrastructure
 
 ```bash
-cd infra && npm install
+cd web/metrics-dashboard
+npm install
+npm run build
+```
+
+```bash
+cd ../../infra  && npm install
 cdk bootstrap  # first time only
 cdk deploy
 ```
@@ -52,10 +91,14 @@ Deploys VPC, API Gateway + Lambda for metrics, S3 + CloudFront for dashboard, an
 ### Step 2: Build AppStream Image
 
 ```bash
+cd ..
 python scripts/prepare-ami.py
 ```
 
-Launches G6e instance from Omniverse marketplace AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes.
+Launches G6e instance from pinned Windows Server 2022 base AMI, installs GRID drivers, creates AMI snapshot, imports to AppStream with g6e validation, and updates `config.json`. Takes 30-45 minutes. This script needs G instance availability, if you get an error wait some minutes/hours and try again.
+
+> **How it works**: CDK uses a two-phase deployment. In Step 1, `customImageName` is empty so only base infrastructure is created. After
+  `prepare-ami.py` sets the image name in `config.json`, Step 3 detects it and creates the fleet and stack.
 
 ### Step 3: Deploy Fleet
 
@@ -63,7 +106,34 @@ Launches G6e instance from Omniverse marketplace AMI, installs GRID drivers, cre
 cd infra && cdk deploy
 ```
 
-Deploys AppStream fleet (STOPPED) and stack. After deployment, start the fleet and set desired capacity to 1 via [console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or [CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/start-fleet.html). Fleet takes 10-15 minutes to reach RUNNING.
+Deploys AppStream fleet (STOPPED, 0 instances) and stack. GPU instances are billed per hour, so the fleet starts empty to avoid unexpected costs.
+
+### Step 4: Start the Fleet
+
+ > **Note**: The commands below use the default `projectName` (`appstream-omniverse`). If you changed it in `config.json`, replace
+  `appstream-omniverse-fleet` and `appstream-omniverse-stack` with `{your-project-name}-fleet` and `{your-project-name}-stack`.
+
+Set desired capacity to 1 and start the fleet:
+
+```bash
+aws appstream update-fleet \
+  --name appstream-omniverse-fleet \
+  --compute-capacity DesiredInstances=1 \
+  --region eu-central-1 \
+  --no-cli-pager \
+&& aws appstream start-fleet \
+  --name appstream-omniverse-fleet \
+  --region eu-central-1
+```
+
+Fleet takes 10-15 minutes to reach RUNNING. Check status with:
+
+```bash
+aws appstream describe-fleets \
+  --names appstream-omniverse-fleet \
+  --region eu-central-1 \
+  --query "Fleets[0].State"
+```
 
 ### Platform deploy and verify commands
 
@@ -73,7 +143,17 @@ The demo platform runs `bash scripts/deploy.sh` as the deploy command and `bash 
 
 ### Create a Streaming Session
 
-Create a streaming URL via [AppStream console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or [AWS CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/create-streaming-url.html). Open in a browser to start a session.
+Once the fleet is RUNNING, create a streaming URL:
+
+```bash
+aws appstream create-streaming-url \
+  --stack-name appstream-omniverse-stack \
+  --fleet-name appstream-omniverse-fleet \
+  --user-id testuser \
+  --region eu-central-1
+```
+
+Open the returned `StreamingURL` in a browser to start a session.
 
 ### Verify GPU Acceleration
 
@@ -87,7 +167,64 @@ In the streaming session:
 
 ### View Metrics Dashboard
 
-If dashboard is enabled (`monitoring.dashboardEnabled: true` in `config.json`), access via `DashboardUrl` from CDK outputs.
+If dashboard is enabled (`monitoring.dashboardEnabled: true` in `config.json`), access via `DashboardUrl` from CDK outputs. You'll need to create a Cognito user first — see [Dashboard Authentication](docs/cognito.md).
+
+## Security Considerations
+
+> ⚠️ **IMPORTANT:** This project is sample code for demonstration and educational
+> purposes only. It is NOT intended for production use without additional security
+> hardening. Work with your security and legal teams to meet your organizational
+> security, regulatory, and compliance requirements before any production deployment.
+
+**Implemented Controls:**
+- HTTPS enforced on all public endpoints (CloudFront REDIRECT_TO_HTTPS)
+- S3 bucket public access blocked (OAC for CloudFront access only)
+- Amazon Cognito authentication for dashboard access (admin-created users only)
+- API Gateway protected with Cognito authorizer
+- VPC isolation: all compute resources in private subnets
+- IAM roles scoped to required actions for Lambda functions and EC2 instances
+  (some actions require wildcard resources due to AWS API limitations — review
+  and tighten for production use)
+- IMDSv2 required on EC2 instances
+- Secrets stored in AWS Secrets Manager (auto-generated, no hardcoded values)
+- Input validation on API parameters (userId regex pattern)
+- API Gateway and S3 access logging enabled
+- EBS encryption enabled on Nucleus EC2 instance
+
+**Known Limitations (Demo/POC):**
+
+The following items are acceptable for demo/POC use but **must be addressed
+before any production deployment**:
+
+| Item | Current State | Production Action Required |
+|------|--------------|---------------------------|
+| CORS policy | `Access-Control-Allow-Origin: *` on API Gateway and Lambda responses | Restrict to your CloudFront domain or use a custom domain with Lambda@Edge origin validation |
+| Authentication flow | Cognito Implicit Grant (`response_type=token`) | Migrate to Authorization Code Flow + PKCE |
+| API Gateway logging | `dataTraceEnabled: true` — request/response bodies logged to CloudWatch | Set to `false` to prevent sensitive data (auth tokens) from being logged |
+| WAF | Not attached to CloudFront distribution | Add AWS WAF with AWSManagedRulesCommonRuleSet (requires us-east-1 stack for CLOUDFRONT scope) |
+| Nucleus communication | HTTP (no TLS) within VPC | Configure TLS certificates for Nucleus stack, especially for authentication traffic |
+| Lambda error responses | `session-manager` and `metrics-collector` return raw exception messages to client | Return generic error messages; log details server-side only |
+| AMI builder EBS | `Encrypted: False` in `scripts/prepare-ami.py` | Change to `Encrypted: True` |
+| File permissions | `Everyone:(OI)(CI)F` on multiple directories in `userdata.ps1` | Restrict to `PhotonUser` or `BUILTIN\Users` |
+| S3 versioning | Not enabled on dashboard and log buckets | Enable `versioned: true` for data recovery |
+| Token storage | Frontend stores tokens in `sessionStorage` | Consider BFF pattern or shorter token expiry with CSP headers |
+| Download integrity | `userdata.ps1` downloads software without checksum verification | Add SHA256 hash verification for all external downloads |
+| API request validation | No API Gateway request validator configured | Add request validators with required parameter schemas |
+
+**Recommendations for Production Use:**
+- Add AWS WAF with managed rule sets on CloudFront (requires cross-region us-east-1 stack for CLOUDFRONT scope)
+- Migrate from Implicit Grant to Authorization Code Flow + PKCE
+- Restrict CORS origins to your specific CloudFront domain
+- Set `dataTraceEnabled: false` in API Gateway deploy options
+- Enable AWS CloudTrail for full API audit logging
+- Configure automatic rotation for Secrets Manager secrets
+- Add VPC endpoints to avoid routing traffic through NAT Gateway
+- Review and tighten IAM policies — replace `resources: ['*']` with specific ARNs where supported
+- Review and tighten security group rules based on your requirements
+- Enable GuardDuty for threat detection
+- Consider AWS Shield Advanced for DDoS protection
+- Add Content Security Policy (CSP) headers via CloudFront response headers policy
+- Run `cdk-nag` for automated CDK security checks
 
 ## Clean Up
 
@@ -126,3 +263,14 @@ See [docs/showcase.md](docs/showcase.md) for the hub content, [launcher.json](la
 - [Configuration Reference](docs/configuration.md) — All config.json settings
 - [Troubleshooting Guide](docs/troubleshooting.md) — Common issues and solutions
 - [Nucleus Guide](docs/nucleus.md) — Multi-user collaboration setup
+- [Dashboard Authentication](docs/cognito.md) — Cognito user management
+
+
+## Security
+
+See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+
+## License
+
+This library is licensed under the MIT-0 License. See the LICENSE file.
+

@@ -39,7 +39,10 @@ export interface Session {
 
 export interface RuntimeConfig {
   apiUrl: string;
-  apiKey: string;
+  cognitoUserPoolId: string;
+  cognitoClientId: string;
+  cognitoDomain: string;
+  cognitoRedirectUri: string;
   nucleusEnabled?: boolean;
 }
 

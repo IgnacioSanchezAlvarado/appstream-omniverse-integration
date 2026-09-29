@@ -85,6 +85,7 @@ Then review it against the [configuration reference](configuration.md). For a fi
 - `image.customImageName` must be **empty** (`""`). The stack only creates the fleet when this value is set, and step 4 fills it in for you. If it already holds an image name from an earlier deploy that no longer exists, clear it.
 - `nucleus.enabled` decides whether the optional Nucleus server (EC2 + EBS + a Secrets Manager secret) is deployed. Leave it `false` unless you want multi-user collaboration; see the [Nucleus guide](nucleus.md).
 - `monitoring.dashboardEnabled: true` deploys the metrics dashboard used by the hub. Keep it on.
+- `dashboard.adminEmail` must be your email: the stack creates the Cognito admin user for the dashboard with it (see [Dashboard authentication](cognito.md)).
 
 ## Step 3: Deploy the base infrastructure
 
@@ -192,7 +193,7 @@ In the streaming session:
 
 ### View the metrics dashboard
 
-Open the `DashboardUrl` output from the CDK deploy. Metrics (FPS, latency, bandwidth, CPU) appear 2 to 3 minutes after a session is active. If the dashboard stays empty or shows "Failed to fetch sessions", follow [Troubleshooting](troubleshooting.md#other-common-issues) and the [CLI metrics check](troubleshooting.md#cli-metrics-check).
+Open the `DashboardUrl` output from the CDK deploy and sign in with the Cognito user (see [Dashboard authentication](cognito.md)). Metrics (FPS, latency, bandwidth, CPU) appear 2 to 3 minutes after a session is active. If the dashboard stays empty or shows "Failed to fetch sessions", follow [Troubleshooting](troubleshooting.md#other-common-issues) and the [CLI metrics check](troubleshooting.md#cli-metrics-check).
 
 To read the outputs again later:
 
@@ -264,12 +265,16 @@ aws ec2 stop-instances --instance-ids <NucleusInstanceId> --region eu-central-1
 
 ## Known security gaps
 
-Accepted for this POC and documented, not fixed, in this project. The hub page shows the same table.
+Accepted for this POC and documented, not fixed, in this project. The table follows the upstream README's Security Considerations (known limitations); read it for the full production checklist. The hub page shows the same table.
 
 | Gap | Where | Why accepted for a POC |
 |-----|-------|------------------------|
 | No AWS WAF on the CloudFront distribution | Metrics dashboard (S3 + CloudFront, `DashboardUrl`) | The dashboard is a static page that only renders metrics; the data comes from the API below. WAF adds cost and rules to maintain for a demo that runs a few hours at a time. |
 | Nucleus reached over plain HTTP on port 8080 | Nucleus web UI and API inside the VPC, reachable only from the AppStream fleet security group and the metrics Lambda | Nucleus has no public endpoint; traffic stays inside private subnets between the fleet and the instance. TLS would require certificates and a hostname the POC does not have. Production guidance in the [Nucleus guide](nucleus.md). |
-| API key authentication on the metrics API | API Gateway + Lambda (`ApiUrl`, `ApiKeyValue` outputs) | The API only reads AppStream CloudWatch metrics and session lists; it cannot start or stop anything. An API key was the simplest gate for a demo. Production would use IAM or Cognito authorizers. |
+| Cognito Implicit Grant sign-in, tokens in `sessionStorage` | Metrics dashboard sign-in (`UserPoolId`, `CognitoDomain` outputs) | Admin-created users only and short-lived tokens; Authorization Code Flow + PKCE is the production fix (README, Security Considerations). |
+| CORS `Access-Control-Allow-Origin: *`, no request validator, `dataTraceEnabled: true` | API Gateway + Lambda (`ApiUrl`) | Every call needs a Cognito token; the API only reads metrics and session lists. Production restricts CORS, adds validators and turns data tracing off. |
+| Raw exception messages in Lambda error responses | `session-manager` and `metrics-collector` Lambdas | Only signed-in users see them; production returns generic errors. |
+| AMI builder EBS not encrypted; `Everyone` full control on some folders; downloads without checksums | `scripts/prepare-ami.py`, `userdata.ps1` (image build only) | The builder instance is temporary and private; production encrypts the volume, narrows permissions to `PhotonUser` and verifies SHA256 hashes. |
+| No S3 versioning | Dashboard and log buckets | Demo data only; production enables versioning. |
 
 Also worth knowing, though not listed as gaps: the fleet instances sit in private subnets and are reached only through the AppStream streaming gateway; `create-streaming-url` links expire and need AWS credentials to create; the platform hub itself sits behind the platform's Cognito user pool.

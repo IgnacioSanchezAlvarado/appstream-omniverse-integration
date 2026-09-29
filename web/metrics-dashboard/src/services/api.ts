@@ -1,4 +1,5 @@
 import { MetricsResponse, Session, RuntimeConfig, NucleusStatus, NucleusMetricsResponse } from '../types';
+import { getStoredTokens, redirectToLogin } from './auth';
 
 let cachedConfig: RuntimeConfig | null = null;
 
@@ -21,18 +22,35 @@ export async function loadConfig(): Promise<RuntimeConfig> {
   // Fallback to environment variables (local development)
   cachedConfig = {
     apiUrl: import.meta.env.VITE_API_URL || 'http://localhost:3000',
-    apiKey: import.meta.env.VITE_API_KEY || 'dev-key'
+    cognitoUserPoolId: '',
+    cognitoClientId: '',
+    cognitoDomain: '',
+    cognitoRedirectUri: 'http://localhost:5173',
   };
 
   return cachedConfig;
 }
 
 async function getHeaders(): Promise<HeadersInit> {
-  const config = await loadConfig();
+  const tokens = getStoredTokens();
+  if (!tokens) {
+    await redirectToLogin();
+    throw new Error('Not authenticated');
+  }
   return {
     'Content-Type': 'application/json',
-    'x-api-key': config.apiKey
+    'Authorization': tokens.idToken,
   };
+}
+
+async function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    sessionStorage.removeItem('auth_tokens');
+    await redirectToLogin();
+    throw new Error('Session expired');
+  }
+  return response;
 }
 
 interface FetchMetricsOptions {
@@ -59,7 +77,7 @@ export async function fetchMetrics(
     ...(options.instanceId && { instanceId: options.instanceId })
   });
 
-  const response = await fetch(`${config.apiUrl}/metrics?${params}`, {
+  const response = await authenticatedFetch(`${config.apiUrl}/metrics?${params}`, {
     headers: await getHeaders()
   });
 
@@ -80,7 +98,7 @@ export async function fetchSessions(
     fleetName
   });
 
-  const response = await fetch(`${config.apiUrl}/sessions?${params}`, {
+  const response = await authenticatedFetch(`${config.apiUrl}/sessions?${params}`, {
     headers: await getHeaders()
   });
 
@@ -99,7 +117,7 @@ export async function createSession(
 ): Promise<{ streamingUrl: string }> {
   const config = await loadConfig();
 
-  const response = await fetch(`${config.apiUrl}/sessions`, {
+  const response = await authenticatedFetch(`${config.apiUrl}/sessions`, {
     method: 'POST',
     headers: await getHeaders(),
     body: JSON.stringify({
@@ -118,7 +136,7 @@ export async function createSession(
 
 export async function fetchNucleusStatus(): Promise<NucleusStatus> {
   const config = await loadConfig();
-  const response = await fetch(`${config.apiUrl}/nucleus/status`, {
+  const response = await authenticatedFetch(`${config.apiUrl}/nucleus/status`, {
     headers: await getHeaders()
   });
   if (!response.ok) {
@@ -136,7 +154,7 @@ export async function fetchNucleusMetrics(
     ...(options.endTime && { endTime: options.endTime }),
     ...(options.period && { period: options.period.toString() })
   });
-  const response = await fetch(`${config.apiUrl}/nucleus/metrics?${params}`, {
+  const response = await authenticatedFetch(`${config.apiUrl}/nucleus/metrics?${params}`, {
     headers: await getHeaders()
   });
   if (!response.ok) {

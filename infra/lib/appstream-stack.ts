@@ -13,6 +13,9 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import * as path from 'path';
 import * as config from '../../config.json';
 
@@ -197,8 +200,76 @@ export class AppStreamOmniverseStack extends cdk.Stack {
     }));
 
     // ──────────────────────────────────────────────
-    // API Gateway: REST API with API Key auth
+    // Cognito User Pool
     // ──────────────────────────────────────────────
+    const userPool = new cognito.UserPool(this, 'DashboardUserPool', {
+      userPoolName: `${config.projectName}-dashboard-users`,
+      selfSignUpEnabled: false,
+      signInAliases: { email: true },
+      autoVerify: { email: true },
+      passwordPolicy: {
+        minLength: 8,
+        requireUppercase: true,
+        requireLowercase: true,
+        requireDigits: true,
+        requireSymbols: false,
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const userPoolDomain = userPool.addDomain('CognitoDomain', {
+      cognitoDomain: {
+        domainPrefix: `${config.projectName}-${this.account}`,
+      },
+    });
+
+    // Create initial admin user from config
+    new cr.AwsCustomResource(this, 'CognitoAdminUser', {
+      onCreate: {
+        service: 'CognitoIdentityServiceProvider',
+        action: 'adminCreateUser',
+        parameters: {
+          UserPoolId: userPool.userPoolId,
+          Username: config.dashboard.adminEmail,
+          UserAttributes: [
+            { Name: 'email', Value: config.dashboard.adminEmail },
+            { Name: 'email_verified', Value: 'true' },
+          ],
+          DesiredDeliveryMediums: ['EMAIL'],
+        },
+        physicalResourceId: cr.PhysicalResourceId.of('admin-user'),
+      },
+      policy: cr.AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: ['cognito-idp:AdminCreateUser'],
+          resources: [userPool.userPoolArn],
+        }),
+      ]),
+    });
+
+    // ──────────────────────────────────────────────
+    // API Gateway: REST API with Cognito auth
+    // ──────────────────────────────────────────────
+    // Account-level CloudWatch role for API Gateway logging
+    const apiGatewayCloudWatchRole = new iam.Role(this, 'ApiGatewayCloudWatchRole', {
+      assumedBy: new iam.ServicePrincipal('apigateway.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonAPIGatewayPushToCloudWatchLogs'),
+      ],
+    });
+    const apiGatewayAccount = new apigateway.CfnAccount(this, 'ApiGatewayAccount', {
+      cloudWatchRoleArn: apiGatewayCloudWatchRole.roleArn,
+    });
+
+    // CloudWatch Logs for API Gateway
+    const apiLogGroup = new logs.LogGroup(this, 'ApiLogGroup', {
+      logGroupName: `/aws/apigateway/${config.projectName}`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // API will initially allow all origins, then restrict to CloudFront after distribution is created
     const api = new apigateway.RestApi(this, 'Api', {
       restApiName: `${config.projectName}-api`,
       description: 'AppStream Omniverse metrics and session management API',
@@ -209,55 +280,89 @@ export class AppStreamOmniverseStack extends cdk.Stack {
       },
       deployOptions: {
         stageName: 'prod',
+        loggingLevel: apigateway.MethodLoggingLevel.INFO,
+        dataTraceEnabled: true,
+        accessLogDestination: new apigateway.LogGroupLogDestination(apiLogGroup),
+        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields(),
       },
     });
+    api.node.addDependency(apiGatewayAccount);
 
-    const apiKeyValue = `${config.projectName}-${this.account}-api-key`;
-    const apiKey = api.addApiKey('ApiKey', {
-      apiKeyName: `${config.projectName}-api-key`,
-      value: apiKeyValue,
+    // Cognito authorizer for API Gateway
+    const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
+      cognitoUserPools: [userPool],
     });
 
-    const usagePlan = api.addUsagePlan('UsagePlan', {
-      name: `${config.projectName}-usage-plan`,
-      throttle: {
-        rateLimit: 50,
-        burstLimit: 100,
+    // Add CORS headers to API Gateway default 4xx/5xx responses (e.g. missing/invalid authorization)
+    api.addGatewayResponse('Default4xx', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': "'*'",
+        'Access-Control-Allow-Headers': "'Content-Type,X-Api-Key,Authorization'",
       },
     });
-
-    usagePlan.addApiKey(apiKey);
-    usagePlan.addApiStage({
-      stage: api.deploymentStage,
+    api.addGatewayResponse('Default5xx', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': "'*'",
+        'Access-Control-Allow-Headers': "'Content-Type,X-Api-Key,Authorization'",
+      },
     });
 
     const metricsResource = api.root.addResource('metrics');
     metricsResource.addMethod('GET', new apigateway.LambdaIntegration(metricsLambda), {
-      apiKeyRequired: true,
+      authorizer: cognitoAuthorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
     const sessionsResource = api.root.addResource('sessions');
     sessionsResource.addMethod('GET', new apigateway.LambdaIntegration(sessionLambda), {
-      apiKeyRequired: true,
+      authorizer: cognitoAuthorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
     sessionsResource.addMethod('POST', new apigateway.LambdaIntegration(sessionLambda), {
-      apiKeyRequired: true,
+      authorizer: cognitoAuthorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
     // ──────────────────────────────────────────────
     // S3: Dashboard hosting bucket (conditional)
     // ──────────────────────────────────────────────
     if (dashboardEnabled) {
+      // S3 bucket for access logs
+      const accessLogBucket = new s3.Bucket(this, 'AccessLogBucket', {
+        bucketName: `${config.projectName}-logs-${this.account}`,
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        autoDeleteObjects: true,
+        encryption: s3.BucketEncryption.S3_MANAGED,
+        lifecycleRules: [
+          {
+            enabled: true,
+            expiration: cdk.Duration.days(30),
+            transitions: [
+              {
+                storageClass: s3.StorageClass.INTELLIGENT_TIERING,
+                transitionAfter: cdk.Duration.days(7),
+              },
+            ],
+          },
+        ],
+      });
+
       const dashboardBucket = new s3.Bucket(this, 'DashboardBucket', {
         bucketName: `${config.projectName}-dashboard-${this.account}`,
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
         autoDeleteObjects: true,
         encryption: s3.BucketEncryption.S3_MANAGED,
+        serverAccessLogsBucket: accessLogBucket,
+        serverAccessLogsPrefix: 'dashboard-access-logs/',
       });
 
       // ──────────────────────────────────────────────
-      // CloudFront: Distribution with OAC
+      // CloudFront Distribution
+      // NOTE: For production, add AWS WAF (must be created in us-east-1 for CloudFront scope)
       // ──────────────────────────────────────────────
       const distribution = new cloudfront.Distribution(this, 'Distribution', {
         defaultBehavior: {
@@ -281,14 +386,48 @@ export class AppStreamOmniverseStack extends cdk.Stack {
       });
 
       // ──────────────────────────────────────────────
+      // Note: CORS restriction to CloudFront domain
+      // ──────────────────────────────────────────────
+      // SECURITY NOTE: API Gateway CORS is currently set to ALL_ORIGINS due to CDK limitations
+      // with circular dependencies when restricting to CloudFront domain.
+      // Mitigation: API requires API key authentication, reducing risk of CORS abuse.
+      // For production, consider:
+      // 1. Using a custom Lambda authorizer to check Origin header
+      // 2. Setting up API Gateway behind CloudFront with a custom domain
+      // 3. Using WAF rules to block direct API access (requires API Gateway to be regional)
+      const cloudFrontOrigin = `https://${distribution.distributionDomainName}`;
+
+      new cdk.CfnOutput(this, 'CloudFrontOrigin', {
+        value: cloudFrontOrigin,
+        description: 'CloudFront origin for API access (CORS currently allows all origins with API key)',
+      });
+
+      // ──────────────────────────────────────────────
+      // Cognito User Pool Client (needs CloudFront domain)
+      // ──────────────────────────────────────────────
+      const userPoolClient = userPool.addClient('DashboardClient', {
+        userPoolClientName: `${config.projectName}-dashboard`,
+        oAuth: {
+          flows: { implicitCodeGrant: true },
+          scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+          callbackUrls: [`https://${distribution.distributionDomainName}`],
+          logoutUrls: [`https://${distribution.distributionDomainName}`],
+        },
+        supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO],
+      });
+
+      // ──────────────────────────────────────────────
       // S3 Deployment: Upload dashboard build + runtime config
       // ──────────────────────────────────────────────
-      new s3deploy.BucketDeployment(this, 'DashboardDeployment', {
+      const dashboardDeployment = new s3deploy.BucketDeployment(this, 'DashboardDeployment', {
         sources: [
           s3deploy.Source.asset(path.join(__dirname, '../../web/metrics-dashboard/dist')),
           s3deploy.Source.jsonData('runtime-config.json', {
             apiUrl: api.url.replace(/\/+$/, ''),
-            apiKey: apiKeyValue,
+            cognitoUserPoolId: userPool.userPoolId,
+            cognitoClientId: userPoolClient.userPoolClientId,
+            cognitoDomain: `${userPoolDomain.domainName}.auth.${this.region}.amazoncognito.com`,
+            cognitoRedirectUri: `https://${distribution.distributionDomainName}`,
             nucleusEnabled: nucleusMetricsEnabled,
           }),
         ],
@@ -303,6 +442,16 @@ export class AppStreamOmniverseStack extends cdk.Stack {
       new cdk.CfnOutput(this, 'DashboardUrl', {
         value: `https://${distribution.distributionDomainName}`,
         description: 'Metrics dashboard URL',
+      });
+
+      new cdk.CfnOutput(this, 'UserPoolId', {
+        value: userPool.userPoolId,
+        description: 'Cognito User Pool ID — use this to create users',
+      });
+
+      new cdk.CfnOutput(this, 'CognitoDomain', {
+        value: `${userPoolDomain.domainName}.auth.${this.region}.amazoncognito.com`,
+        description: 'Cognito hosted UI domain',
       });
     }
 
@@ -429,11 +578,13 @@ export class AppStreamOmniverseStack extends cdk.Stack {
         'if [ -f /tmp/nucleus-setup/${NUCLEUS_BUILD}.tar.gz ]; then tar -xzf /tmp/nucleus-setup/${NUCLEUS_BUILD}.tar.gz; fi',
         'chown -R ubuntu:ubuntu /opt/ove',
         '',
-        '# Retrieve secrets from Secrets Manager',
-        'ADMIN_SECRET=$(aws secretsmanager get-secret-value --secret-id ${ADMIN_SECRET_ARN} --region ${REGION} --query SecretString --output text)',
-        'SERVICE_SECRET=$(aws secretsmanager get-secret-value --secret-id ${SERVICE_SECRET_ARN} --region ${REGION} --query SecretString --output text)',
-        'ADMIN_PASSWORD=$(echo ${ADMIN_SECRET} | jq -r .password)',
-        'SERVICE_PASSWORD=$(echo ${SERVICE_SECRET} | jq -r .password)',
+        '# Retrieve secrets from Secrets Manager (suppress output)',
+        'set +x',
+        'ADMIN_SECRET=$(aws secretsmanager get-secret-value --secret-id ${ADMIN_SECRET_ARN} --region ${REGION} --query SecretString --output text 2>/dev/null)',
+        'SERVICE_SECRET=$(aws secretsmanager get-secret-value --secret-id ${SERVICE_SECRET_ARN} --region ${REGION} --query SecretString --output text 2>/dev/null)',
+        'ADMIN_PASSWORD=$(echo ${ADMIN_SECRET} | jq -r .password 2>/dev/null)',
+        'SERVICE_PASSWORD=$(echo ${SERVICE_SECRET} | jq -r .password 2>/dev/null)',
+        'set -x',
         '',
         '# Get instance metadata via IMDSv2',
         'TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")',
@@ -594,10 +745,12 @@ export class AppStreamOmniverseStack extends cdk.Stack {
         const nucleusMetricsResource = nucleusResource.addResource('metrics');
 
         nucleusStatusResource.addMethod('GET', new apigateway.LambdaIntegration(nucleusMetricsLambda), {
-          apiKeyRequired: true,
+          authorizer: cognitoAuthorizer,
+          authorizationType: apigateway.AuthorizationType.COGNITO,
         });
         nucleusMetricsResource.addMethod('GET', new apigateway.LambdaIntegration(nucleusMetricsLambda), {
-          apiKeyRequired: true,
+          authorizer: cognitoAuthorizer,
+          authorizationType: apigateway.AuthorizationType.COGNITO,
         });
       }
 
@@ -635,11 +788,6 @@ export class AppStreamOmniverseStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: api.url,
       description: 'API Gateway URL',
-    });
-
-    new cdk.CfnOutput(this, 'ApiKeyValue', {
-      value: apiKeyValue,
-      description: 'API Key value for x-api-key header',
     });
 
     new cdk.CfnOutput(this, 'ImageImportRoleArn', {

@@ -10,7 +10,7 @@ with G6e instance types (L40S GPUs).
 Usage:
     python scripts/prepare-ami.py
     python scripts/prepare-ami.py --region eu-central-1
-    python scripts/prepare-ami.py --marketplace-ami ami-07bafd3ee37eb865e
+    python scripts/prepare-ami.py --marketplace-ami ami-XXXXXXXXXXXXXXXXX
     python scripts/prepare-ami.py --testing  # Keep instance running for manual testing
     python scripts/prepare-ami.py --from-instance i-abc123  # Resume from existing instance
 """
@@ -55,7 +55,7 @@ def log(msg):
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH) as f:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -172,7 +172,7 @@ def create_instance_profile(iam, project_name):
         pass
 
     log(f'IAM profile ready: {profile_name} (waiting 10s for propagation)')
-    time.sleep(10)
+    time.sleep(10)  # nosemgrep: arbitrary-sleep - IAM propagation delay required
     return profile_name
 
 
@@ -223,7 +223,7 @@ def get_image_import_role_arn(cfn, sts, project_name, region):
     return role_arn
 
 
-def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, region, config):
+def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, region, config, skip_runtime_validation=False):
     """Import AMI to AppStream as a custom image."""
     log('--- Step 7/8: Importing AMI to AppStream ---')
 
@@ -237,41 +237,105 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
     # Generate AppStream image name (timestamp-based, same as AMI)
     # Note: AppStream image names cannot start with 'appstream', 'aws', 'amazon'
     timestamp = ami_name.split('-')[-1]  # Extract timestamp from ami_name
-    image_name = f'omniverse-g6e-{timestamp}'
+    base_image_name = f'omniverse-g6e-{timestamp}'
 
+    if skip_runtime_validation:
+        log('Skipping runtime validation (--skip-runtime-validation flag set)')
+        return _do_import(appstream, base_image_name, ami_id, role_arn, region, appstream_tags, None)
+
+    # Build list of validation instance types to try (ordered by size for cost efficiency)
+    validation_types = [
+        'Accelerated.g6e.xlarge',
+        'Accelerated.g6e.2xlarge',
+        'Accelerated.g6e.4xlarge',
+        'Accelerated.g6e.8xlarge',
+    ]
+
+    # Pre-check quotas to skip types with quota=0
+    sq = boto3.client('service-quotas', region_name=region)
+    valid_types = []
+    for vtype in validation_types:
+        try:
+            paginator = sq.get_paginator('list_service_quotas')
+            for page in paginator.paginate(ServiceCode='appstream2'):
+                for quota in page['Quotas']:
+                    if vtype in quota['QuotaName'] and 'image builders' in quota['QuotaName']:
+                        if quota['Value'] > 0:
+                            valid_types.append(vtype)
+                            log(f'  {vtype}: quota={int(quota["Value"])} (eligible)')
+                        else:
+                            log(f'  {vtype}: quota=0 (skipping)')
+                        break
+                else:
+                    continue
+                break
+        except Exception as e:
+            log(f'  {vtype}: quota check failed ({e}), will try anyway')
+            valid_types.append(vtype)
+
+    if not valid_types:
+        log('WARNING: All validation instance types have quota=0. Trying anyway with g6e.xlarge...')
+        valid_types = ['Accelerated.g6e.xlarge']
+
+    log(f'Validation instance types to try: {valid_types}')
+
+    # Try each validation type
+    for i, vtype in enumerate(valid_types):
+        # Use unique name per attempt so failed images don't block retries
+        image_name = base_image_name if i == 0 else f'{base_image_name}-v{i+1}'
+        log(f'Attempting import with validation type: {vtype} (image: {image_name})')
+
+        result = _do_import(appstream, image_name, ami_id, role_arn, region, appstream_tags, vtype)
+        if result is not None:
+            return result
+
+        # If we get here, this attempt failed — try next type
+        if i < len(valid_types) - 1:
+            log(f'Trying next validation instance type...')
+
+    log('ERROR: All validation instance types failed.')
+    return None
+
+
+def _do_import(appstream, image_name, ami_id, role_arn, region, appstream_tags, validation_type):
+    """Attempt a single AppStream image import. Returns image_name on success, None on failure."""
     log(f'Creating AppStream image: {image_name}')
 
-    # Build AWS CLI command (boto3 doesn't support create_imported_image in version 1.35.49)
     cmd = [
         'aws', 'appstream', 'create-imported-image',
         '--name', image_name,
         '--source-ami-id', ami_id,
         '--iam-role-arn', role_arn,
-        '--runtime-validation-config', json.dumps({'IntendedInstanceType': 'Accelerated.g6e.xlarge'}),
         '--agent-software-version', 'ALWAYS_LATEST',
         '--description', f'AppStream image from {ami_id}',
         '--display-name', 'Omniverse Developer Kit',
         '--region', region,
     ]
-    # Add tags if present
+    if validation_type:
+        cmd.extend(['--runtime-validation-config', json.dumps({'IntendedInstanceType': validation_type})])
     if appstream_tags:
         cmd.extend(['--tags', json.dumps(appstream_tags)])
 
+    # nosemgrep: dangerous-subprocess-use-audit - cmd values from trusted config and AWS API responses only
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        log(f'ERROR: Failed to create AppStream imported image: {result.stderr}')
+        stderr = result.stderr
+        if 'LimitExceededException' in stderr:
+            log(f'  Quota exceeded for {validation_type}, skipping.')
+            return None
+        log(f'ERROR: Failed to create AppStream imported image: {stderr}')
         return None
     log(f'AppStream image import started: {image_name}')
 
     # Poll for image availability
-    log('Waiting for AppStream image to become available (max 45 minutes)...')
-    max_attempts = 90  # 90 * 30s = 45 minutes
+    log('Waiting for AppStream image to become available (max 60 minutes)...')
+    max_attempts = 120  # 120 * 30s = 60 minutes
     for attempt in range(max_attempts):
         try:
             resp = appstream.describe_images(Names=[image_name])
             if not resp.get('Images'):
                 log(f'  Image not found yet, retrying... ({attempt * 30}s elapsed)')
-                time.sleep(30)
+                time.sleep(30)  # nosemgrep: arbitrary-sleep - polling AppStream image status
                 continue
 
             image = resp['Images'][0]
@@ -281,10 +345,17 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
                 log(f'AppStream image is AVAILABLE: {image_name}')
                 return image_name
             elif state == 'FAILED':
+                reason = image.get('StateChangeReason', {}).get('Message', 'Unknown')
                 errors = image.get('ImageErrors', [])
-                log(f'ERROR: AppStream image import FAILED.')
+                log(f'AppStream image import FAILED: {reason}')
                 for error in errors:
                     log(f'  Error Code: {error.get("ErrorCode")}, Message: {error.get("ErrorMessage")}')
+                # Clean up failed image
+                try:
+                    appstream.delete_image(Name=image_name)
+                    log(f'  Cleaned up failed image: {image_name}')
+                except Exception:
+                    pass
                 return None
             else:
                 if attempt % 4 == 0:  # Log every 2 minutes
@@ -293,16 +364,16 @@ def import_to_appstream(appstream, cfn, sts, ami_id, ami_name, project_name, reg
             log(f'  Error checking image status: {e}')
 
         if attempt < max_attempts - 1:
-            time.sleep(30)
+            time.sleep(30)  # nosemgrep: arbitrary-sleep - polling AppStream image status
 
-    log('ERROR: Timeout waiting for AppStream image (45 minutes)')
-    return None
+    log(f'Timeout waiting for AppStream image (60 minutes). Import is still in progress.')
+    return f'TIMEOUT:{image_name}'
 
 
 def update_config_with_image(image_name, project_name):
     """Update config.json with new AppStream image name."""
     try:
-        with open(CONFIG_PATH, 'r') as f:
+        with open(CONFIG_PATH, 'r', encoding="utf-8") as f:
             config = json.load(f)
 
         if 'image' not in config:
@@ -310,7 +381,7 @@ def update_config_with_image(image_name, project_name):
 
         config['image']['customImageName'] = image_name
 
-        with open(CONFIG_PATH, 'w') as f:
+        with open(CONFIG_PATH, 'w', encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
         log(f'Updated config.json: image.customImageName = {image_name}')
@@ -337,7 +408,7 @@ def discover_default_vpc_subnets(ec2):
         return []
 
 
-def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project_name, profile_name, instance_types=None):
+def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project_name, profile_name, instance_types=None, grid_driver_s3_path='s3://ec2-windows-nvidia-drivers/latest/'):
     """Try instance types across subnets until one succeeds.
 
     Tries in order:
@@ -346,8 +417,15 @@ def launch_instance(ec2, ami_id, private_subnets, public_subnets, sg_id, project
     3. Default VPC subnets (as last resort, with public IP)
     """
     global _instance_id
-    with open(USERDATA_FILE, 'rb') as f:
-        userdata_raw = f.read()
+    with open(USERDATA_FILE, 'r', encoding='utf-8') as f:
+        userdata_text = f.read()
+
+    # Replace GRID driver S3 path with config value
+    userdata_text = userdata_text.replace(
+        's3://ec2-windows-nvidia-drivers/latest/',
+        grid_driver_s3_path
+    )
+    userdata_raw = userdata_text.encode('utf-8')
     userdata_b64 = base64.b64encode(gzip.compress(userdata_raw)).decode()
 
     types_to_try = instance_types or DEFAULT_INSTANCE_TYPES
@@ -474,9 +552,14 @@ def main():
     parser.add_argument('--testing', action='store_true', help='Keep instance running for manual testing')
     parser.add_argument('--from-instance', help='Resume AMI creation from existing instance ID')
     parser.add_argument('--skip-appstream-import', action='store_true', help='Skip automatic AppStream image import')
+    parser.add_argument('--skip-runtime-validation', action='store_true',
+                        help='Skip AppStream runtime validation during import (use if g6e validation is failing)')
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, handle_interrupt)
+
+    if args.skip_runtime_validation:
+        log('Runtime validation will be skipped for AppStream import')
 
     ec2 = boto3.client('ec2', region_name=args.region)
     iam = boto3.client('iam', region_name=args.region)
@@ -508,8 +591,21 @@ def main():
                 base_ami = args.marketplace_ami
                 log(f'Using marketplace AMI from CLI: {base_ami}')
                 log('WARNING: Marketplace AMIs carry product codes that may block AppStream import.')
+            elif config.get('image', {}).get('baseAmiId'):
+                base_ami = config['image']['baseAmiId']
+                try:
+                    resp = ec2.describe_images(ImageIds=[base_ami])
+                    if not resp['Images']:
+                        raise ValueError('AMI not found')
+                    log(f'Using pinned base AMI from config: {base_ami}')
+                except Exception:
+                    log(f'WARNING: Pinned AMI {base_ami} not found in {args.region} — falling back to SSM lookup')
+                    base_ami = get_base_ami(ssm, args.region, ami_param)
+                    log(f'Resolved AMI for {args.region}: {base_ami}')
+                    log(f'TIP: Pin this AMI in config.json → image.baseAmiId: "{base_ami}"')
             else:
                 base_ami = get_base_ami(ssm, args.region, ami_param)
+                log('WARNING: Using latest AMI from SSM. Pin image.baseAmiId in config.json to avoid breakage.')
 
             # Step 2: Discover infrastructure
             log('--- Step 2/8: Discovering infrastructure ---')
@@ -532,8 +628,9 @@ def main():
 
             # Step 4: Launch GPU instance (tries types from config in order)
             ami_builder_types = config.get('amiBuilder', {}).get('instanceTypes', None)
+            grid_driver_s3_path = config.get('amiBuilder', {}).get('gridDriverS3Path', 's3://ec2-windows-nvidia-drivers/latest/')
             log(f'--- Step 4/8: Launching GPU instance (preference: {ami_builder_types or DEFAULT_INSTANCE_TYPES}) ---')
-            inst_id, inst_type = launch_instance(ec2, base_ami, private_subnets, public_subnets, sg_id, args.project_name, profile_name, ami_builder_types)
+            inst_id, inst_type = launch_instance(ec2, base_ami, private_subnets, public_subnets, sg_id, args.project_name, profile_name, ami_builder_types, grid_driver_s3_path)
 
             # Step 5: Wait for setup and ensure userdata executes
             log('--- Step 5/8: Waiting for instance + GRID driver install ---')
@@ -543,7 +640,7 @@ def main():
 
             # Wait for SSM to come online
             log('Waiting for SSM agent to become available...')
-            time.sleep(90)
+            time.sleep(90)  # nosemgrep: arbitrary-sleep - wait for SSM agent to initialize after instance start
             for attempt in range(20):
                 try:
                     resp = ssm.describe_instance_information(
@@ -556,7 +653,7 @@ def main():
                 except Exception as e:
                     log(f'SSM not ready yet: {e}')
                 if attempt < 19:
-                    time.sleep(15)
+                    time.sleep(15)  # nosemgrep: arbitrary-sleep - polling SSM agent status
             else:
                 log('WARNING: SSM agent did not come online, proceeding anyway...')
 
@@ -571,7 +668,7 @@ def main():
                     TimeoutSeconds=60
                 )
                 check_cmd_id = check_resp['Command']['CommandId']
-                time.sleep(5)
+                time.sleep(5)  # nosemgrep: arbitrary-sleep - wait for SSM command to register
                 result = ssm.get_command_invocation(
                     CommandId=check_cmd_id,
                     InstanceId=inst_id
@@ -587,8 +684,14 @@ def main():
                 log('Userdata did not auto-execute, running via SSM...')
 
                 # Read and encode userdata.ps1 (strip <powershell> tags)
-                with open(USERDATA_FILE) as f:
+                with open(USERDATA_FILE, encoding="utf-8") as f:
                     userdata_content = f.read()
+
+                # Replace GRID driver S3 path with config value
+                userdata_content = userdata_content.replace(
+                    's3://ec2-windows-nvidia-drivers/latest/',
+                    grid_driver_s3_path
+                )
 
                 # Remove XML tags
                 userdata_content = userdata_content.replace('<powershell>', '').replace('</powershell>', '').strip()
@@ -629,7 +732,7 @@ def main():
                                     Parameters={'commands': ['Test-Path C:\\PrepAMI.complete']},
                                     TimeoutSeconds=60
                                 )
-                                time.sleep(5)
+                                time.sleep(5)  # nosemgrep: arbitrary-sleep - wait for SSM command to register
                                 verify_result = ssm.get_command_invocation(
                                     CommandId=verify_resp['Command']['CommandId'],
                                     InstanceId=inst_id
@@ -651,7 +754,7 @@ def main():
                             log(f'  Waiting for command to be registered ({attempt * 30}s elapsed)')
 
                     if attempt < 59:
-                        time.sleep(30)
+                        time.sleep(30)  # nosemgrep: arbitrary-sleep - polling SSM command status
                 else:
                     log('ERROR: SSM command timed out after 30 minutes.')
                     raise Exception('Userdata script execution timed out')
@@ -738,17 +841,25 @@ def main():
 
         # Step 7: Import to AppStream (unless --skip-appstream-import or --testing)
         appstream_image_name = None
+        timeout_image_name = None
         if not args.skip_appstream_import and not args.testing:
             appstream_image_name = import_to_appstream(
-                appstream, cfn, sts, ami_id, ami_name, args.project_name, args.region, config
+                appstream, cfn, sts, ami_id, ami_name, args.project_name, args.region, config, args.skip_runtime_validation
             )
+
+            if appstream_image_name and appstream_image_name.startswith('TIMEOUT:'):
+                timeout_image_name = appstream_image_name.split(':', 1)[1]
+                appstream_image_name = None
 
             if appstream_image_name:
                 # Update config.json
                 if update_config_with_image(appstream_image_name, args.project_name):
                     log('Config updated successfully.')
+            elif timeout_image_name:
+                log(f'AppStream image import is still in progress: {timeout_image_name}')
+                log('The import exceeded the wait time but may still succeed.')
             else:
-                log('WARNING: AppStream image import failed or timed out.')
+                log('WARNING: AppStream image import failed.')
                 log('You can manually import the AMI using the instructions below.')
 
         # Step 8: Cleanup
@@ -764,17 +875,36 @@ def main():
         print(f'  TPM:        {img.get("TpmSupport")}')
         if appstream_image_name:
             print(f'  AppStream:  {appstream_image_name} (AVAILABLE)')
+        elif timeout_image_name:
+            print(f'  AppStream:  {timeout_image_name} (STILL IN PROGRESS)')
         print('=' * 60)
 
         if appstream_image_name:
+            # Success path - AppStream import completed
             print('\nNext steps:')
             print(f'  1. Deploy the fleet with new image: cd infra && cdk deploy')
             print(f'  2. Start the fleet and test streaming session')
             print(f'  3. Verify Omniverse and GPU drivers: nvidia-smi')
-        else:
+        elif timeout_image_name:
+            # Timeout - import still in progress on AWS side
+            print('\n' + '-' * 60)
+            print('  APPSTREAM IMAGE IMPORT STILL IN PROGRESS')
+            print('  The import exceeded the script wait time but is still')
+            print('  running on AWS. It may still succeed.')
+            print('-' * 60)
+            print(f'\nCheck status:')
+            print(f'  aws appstream describe-images \\')
+            print(f'    --names {timeout_image_name} \\')
+            print(f'    --region {args.region} \\')
+            print(f'    --query "Images[0].State" --output text')
+            print(f'\nOnce the image shows AVAILABLE:')
+            print(f'  1. Update config.json: set image.customImageName = "{timeout_image_name}"')
+            print(f'  2. Deploy the fleet: cd infra && cdk deploy')
+            print(f'  3. Start the fleet and test streaming session')
+        elif args.skip_appstream_import:
+            # Intentional skip - user chose not to import
             print('\nNext steps:')
-            if args.skip_appstream_import:
-                print('  (AppStream import skipped with --skip-appstream-import flag)')
+            print('  (AppStream import skipped with --skip-appstream-import flag)')
             print('  1. Import AMI to AppStream via CLI:')
             print(f'     aws appstream create-imported-image \\')
             print(f'       --name {args.project_name}-<timestamp> \\')
@@ -788,8 +918,33 @@ def main():
             print(f'     Instance type: Accelerated.g6e.xlarge')
             print(f'     IAM role: {args.project_name}-image-import-role')
             print('  3. Wait for image Available (~30 min)')
-            print('  4. Update config.json: image.customImageName')
+            print('  4. Update config.json: image.customImageName = "<image-name>"')
             print('  5. Run: cd infra && cdk deploy')
+        else:
+            # FAILED import - make it loud and exit with error
+            print('\n' + '!' * 60)
+            print('  APPSTREAM IMAGE IMPORT FAILED')
+            print('  The AMI was created but could not be imported to AppStream.')
+            print('  config.json was NOT updated. The fleet will NOT be created')
+            print('  until you complete the import manually.')
+            print('!' * 60)
+            print('\nManual recovery steps:')
+            print(f'  1. Import AMI to AppStream via CLI:')
+            print(f'     aws appstream create-imported-image \\')
+            print(f'       --name {args.project_name}-<timestamp> \\')
+            print(f'       --source-image-id {ami_id} \\')
+            print(f'       --iam-role-arn <image-import-role-arn> \\')
+            print(f'       --runtime-validation-config IntendedInstanceType=Accelerated.g6e.xlarge \\')
+            print(f'       --agent-software-version ALWAYS_LATEST \\')
+            print(f'       --region {args.region}')
+            print('  2. Or use AppStream console > Images > Import Image')
+            print(f'     AMI ID: {ami_id}')
+            print(f'     Instance type: Accelerated.g6e.xlarge')
+            print(f'     IAM role: {args.project_name}-image-import-role')
+            print('  3. Wait for image Available (~30 min)')
+            print('  4. Update config.json: image.customImageName = "<image-name>"')
+            print('  5. Run: cd infra && cdk deploy')
+            sys.exit(1)
 
     finally:
         if args.testing:
