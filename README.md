@@ -64,6 +64,10 @@ cd infra && cdk deploy
 
 Deploys AppStream fleet (STOPPED) and stack. After deployment, start the fleet and set desired capacity to 1 via [console](https://docs.aws.amazon.com/appstream2/latest/developerguide/set-up-stacks-fleets.html) or [CLI](https://docs.aws.amazon.com/cli/latest/reference/appstream/start-fleet.html). Fleet takes 10-15 minutes to reach RUNNING.
 
+### Platform deploy and verify commands
+
+The demo platform runs `bash scripts/deploy.sh` as the deploy command and `bash scripts/verify.sh` as the verify command. The CDK stack is deployed by the owner with the steps above, so `deploy.sh` skips `cdk deploy` unless `AGP_DEPLOY_INFRA=1` is set; it prepares `.venv`. `verify.sh` runs `scripts/verify-showcase.sh` when present, checks `.venv/bin/python`, and (with `AGP_DEPLOY_INFRA=1`) checks the stack is `CREATE_COMPLETE`/`UPDATE_COMPLETE`.
+
 ## Test It
 
 ### Create a Streaming Session
