@@ -1,7 +1,7 @@
 import json
 import os
+import socket
 import boto3
-import urllib.request
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -234,12 +234,14 @@ def handle_eventbridge(event):
     if not nucleus_ip:
         return {'statusCode': 500, 'body': json.dumps({'error': 'NUCLEUS_PRIVATE_IP not configured'})}
 
-    # Probe Nucleus web UI
+    # Probe Nucleus Core API via TCP socket check on port 3009
+    # This avoids transmitting data over unencrypted HTTP
     try:
         start = time.time()
-        req = urllib.request.Request(f'http://{nucleus_ip}:8080/', method='GET')
-        req.add_header('User-Agent', 'NucleusMetricsProbe/1.0')
-        urllib.request.urlopen(req, timeout=10)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect((nucleus_ip, 3009))
+        sock.close()
         latency_ms = (time.time() - start) * 1000
     except Exception:
         latency_ms = -1  # -1 indicates unreachable

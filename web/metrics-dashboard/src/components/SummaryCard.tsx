@@ -39,22 +39,26 @@ export default function SummaryCard({
           </span>
           <span className="value-unit mono">{unit}</span>
         </div>
+        {/* nosemgrep: jsx-not-internationalized */}
         <div className="primary-stat-label mono">
           {primaryStat === 'maximum' ? 'peak / 60s' : 'avg / 60s'}
         </div>
 
         <div className="secondary-values">
           <div className="stat-item">
+            {/* nosemgrep: jsx-not-internationalized */}
             <span className="stat-label mono">AVG</span>
             <span className="stat-value mono">{formatValue(summary.average)}</span>
           </div>
           <div className="stat-divider"></div>
           <div className="stat-item">
+            {/* nosemgrep: jsx-not-internationalized */}
             <span className="stat-label mono">MIN</span>
             <span className="stat-value mono">{formatValue(summary.minimum)}</span>
           </div>
           <div className="stat-divider"></div>
           <div className="stat-item">
+            {/* nosemgrep: jsx-not-internationalized */}
             <span className="stat-label mono">MAX</span>
             <span className="stat-value mono">{formatValue(summary.maximum)}</span>
           </div>

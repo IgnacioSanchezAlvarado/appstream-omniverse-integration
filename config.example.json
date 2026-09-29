@@ -11,8 +11,9 @@
   },
   "image": {
     "baseAmiParameter": "/aws/service/ami-windows-latest/TPM-Windows_Server-2022-English-Full-Base",
+    "baseAmiId": "ami-0d58785614c76b704",
     "marketplaceAmiId": "ami-PLACEHOLDER",
-    "customImageName": "omniverse-g6e-PLACEHOLDER"
+    "customImageName": ""
   },
   "amiBuilder": {
     "_comment": "G6e instance types tried in order for AMI creation. Must match fleet GPU family (L40S) for GRID driver compatibility.",
@@ -21,7 +22,9 @@
       "g6e.2xlarge",
       "g6e.4xlarge",
       "g6e.8xlarge"
-    ]
+    ],
+    "gridDriverS3Path": "s3://ec2-windows-nvidia-drivers/grid-19.4/",
+    "gridDriverVersion": "582.16"
   },
   "monitoring": {
     "dashboardEnabled": true,
@@ -43,6 +46,9 @@
     "instanceType": "c5.2xlarge",
     "storageSize": 512,
     "nucleusBuild": "nucleus-stack-2023.1.0+tag-2023.1.0.gitlab.8633670.7f07353a"
+  },
+  "dashboard": {
+    "adminEmail": "admin@example.com"
   },
   "tags": {
     "Project": "appstream-omniverse",
